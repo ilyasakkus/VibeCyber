@@ -13,8 +13,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Starter Project",
-  description: "A clean starting point for building your site.",
+  title: "WebCyber | Güvenlik Operasyon Merkezi",
+  description:
+    "Web, kaynak kod, mobil ve masaüstü uygulamaları için katmanlı açık kaynak güvenlik tarama platformu.",
+  applicationName: "WebCyber",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
@@ -27,10 +29,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+    <html lang="tr">
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>
         {children}
       </body>
     </html>

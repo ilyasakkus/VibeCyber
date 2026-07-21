@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/desktop/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -40,3 +41,7 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/desktop/dist/
+/desktop/resources/bin/webcyber
+/webcyber
+*.sarif

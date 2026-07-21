@@ -1,98 +1,120 @@
-# vinext-starter
+# WebCyber
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+WebCyber; web adreslerini, kaynak kod klasörlerini, mobil paketleri ve masaüstü
+uygulamalarını aynı bulgu modeliyle incelemeyi hedefleyen açık kaynaklı bir
+güvenlik tarama platformudur.
 
-## Prerequisites
+> [!IMPORTANT]
+> WebCyber yalnızca sahibi olduğunuz veya test etme izniniz bulunan hedeflerde
+> kullanılmalıdır. Varsayılan `observe` ve `safe` profilleri veri değiştiren,
+> kalıcı payload bırakan veya exploit çalıştıran testler yapmaz.
 
-- Node.js `>=22.13.0`
+## Bugünkü durum
 
-## Quick Start
+Bu depo ilk çalışan dikey dilimi içerir:
+
+- Cloudflare uyumlu React web kontrol paneli
+- Güvenli varsayılanlara sahip Go CLI ve ortak bulgu modeli
+- Yerel dosya seçimi için izole Electron masaüstü kabuğu
+- JSON ve SARIF çıktı sözleşmeleri
+- SSRF, yönlendirme, dosya/symlink, süre ve çıktı sınırları
+- Güvenlik politikası, tehdit modeli ve eklenti manifest sözleşmesi
+
+İlk dilim gözlem ve statik analiz odaklıdır. Nuclei, Semgrep, Trivy, Gitleaks,
+MobSF ve binary analiz araçları daha sonra imzalı ve sabitlenmiş worker
+adaptörleri olarak eklenir; kullanıcı girdisi hiçbir zaman shell komutuna
+dönüştürülmez.
+
+## Mimari
+
+```text
+Web paneli ──────────────┐
+Masaüstü uygulaması ─────┼─> Control plane / tarama planı
+CLI / yerel agent ───────┘            │
+                                      ▼
+                          İzole worker adaptörleri
+                                      │
+                                      ▼
+                    Normalize et → tekilleştir → raporla
+```
+
+Web tarayıcısı kullanıcının yerel dosya yolunu okuyamaz. Bu nedenle URL işleri
+doğrulanmış uzak worker'larda, klasör ve uygulama işleri ise masaüstü uygulaması
+veya kullanıcının kurduğu yerel agent üzerinde çalışır. Ayrıntılar için
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ve
+[`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) dosyalarına bakın.
+
+## Gereksinimler
+
+- Node.js 22.13 veya üzeri
+- Go 1.25 veya üzeri
+- Masaüstü geliştirme için Electron'ın desteklediği bir işletim sistemi
+
+## Çalıştırma
+
+Web paneli:
 
 ```bash
 npm install
 npm run dev
-npm run build
 ```
 
-This starter does not use `wrangler.jsonc`.
+Go CLI:
 
-## Included Shape
-
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+go test ./...
+go run ./cmd/webcyber scan --type source --target . --profile observe --format json
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+İzinli bir URL üzerinde yalnızca gözlem kontrolleri:
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+```bash
+go run ./cmd/webcyber scan \
+  --type web \
+  --target https://example.com \
+  --profile observe \
+  --format sarif
+```
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+Masaüstü kabuğu:
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+```bash
+go build -o desktop/resources/bin/webcyber ./cmd/webcyber
+npm --prefix desktop install
+npm --prefix desktop start
+```
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+## Güvenlik profilleri
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+| Profil | Amaç | Varsayılan sınır |
+| --- | --- | --- |
+| `observe` | TLS, başlık, metadata ve yerel statik analiz | Veri değiştirmez |
+| `safe` | Sınırlandırılmış crawl ve incelenmiş kurallar | Aynı origin, oran/süre kotası |
+| `active` | Yetkili staging ortamında ileri testler | Bu ilk dilimde kapalı |
 
-## Useful Commands
+Halka açık bir WebCyber kurulumu, aktif tarama başlatmadan önce hedef sahipliği,
+Rules of Engagement kaydı ve tenant bazlı oran limitini zorunlu tutmalıdır.
 
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+## Depo yapısı
 
-## Learn More
+```text
+app/                 Web kontrol paneli
+cmd/webcyber/        CLI giriş noktası
+internal/            Tarama çekirdeği ve yerleşik adaptörler
+desktop/             Güvenli Electron masaüstü kabuğu
+docs/                Mimari, tehdit modeli ve yol haritası
+schemas/             Eklenti sözleşmeleri
+```
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+## Yol haritası
+
+Sıralama güvenlik sınırlarını önce kurar: URL + kaynak kod, ardından APK ve
+Electron statik analizi, sonrasında platforma özel PE/ELF/Mach-O adaptörleri ve
+en son açık izinli aktif DAST. Ayrıntılı plan
+[`docs/ROADMAP.md`](docs/ROADMAP.md) içindedir.
+
+## Katkı ve lisans
+
+Katkılar için [`CONTRIBUTING.md`](CONTRIBUTING.md), güvenlik açığı bildirmek
+için [`SECURITY.md`](SECURITY.md) dosyasını okuyun. Proje Apache-2.0 lisansıyla
+sunulur.

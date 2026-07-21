@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebCyber</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.mjs"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#scanner" aria-label="WebCyber ana ekran">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <path d="M16 2 28 7v8c0 7.4-4.7 12.3-12 15C8.7 27.3 4 22.4 4 15V7l12-5Z" />
+              <path d="m10.5 16 3.5 3.5 7.5-8" />
+            </svg>
+          </span>
+          <span>Web<span>Cyber</span></span>
+        </a>
+        <div class="engine-state" title="Tarama motoru bu cihazda calisir">
+          <span class="pulse-dot" aria-hidden="true"></span>
+          Yerel tarama motoru
+        </div>
+      </header>
+
+      <main id="scanner">
+        <section class="intro" aria-labelledby="page-title">
+          <div>
+            <p class="eyebrow">Cok katmanli guvenlik analizi</p>
+            <h1 id="page-title">Varliginizi secin.<br /><span>Riskleri gorun.</span></h1>
+          </div>
+          <p class="intro-copy">
+            Web hedeflerini, kaynak kodlarini ve uygulama paketlerini tek bir guvenli
+            masaustu akisinda inceleyin. Tarama yalnizca sizin acikca sectiginiz hedefte
+            baslatilir.
+          </p>
+        </section>
+
+        <section class="workspace" aria-label="Yeni tarama">
+          <div class="workspace-main">
+            <div class="section-heading">
+              <div>
+                <span class="step-number">01</span>
+                <div>
+                  <h2>Hedef turu</h2>
+                  <p>Analiz edilecek varlik katmanini secin.</p>
+                </div>
+              </div>
+              <span class="local-badge">Cihazdan cikmaz</span>
+            </div>
+
+            <div class="target-tabs" role="tablist" aria-label="Hedef turleri">
+              <button class="target-tab is-active" type="button" role="tab" aria-selected="true" data-mode="web">
+                <span class="tab-icon" aria-hidden="true">◎</span>
+                <span><strong>Web</strong><small>URL hedefi</small></span>
+              </button>
+              <button class="target-tab" type="button" role="tab" aria-selected="false" data-mode="source">
+                <span class="tab-icon" aria-hidden="true">&lt;/&gt;</span>
+                <span><strong>Kaynak kod</strong><small>Dosya veya repo</small></span>
+              </button>
+              <button class="target-tab" type="button" role="tab" aria-selected="false" data-mode="mobile">
+                <span class="tab-icon" aria-hidden="true">▯</span>
+                <span><strong>Mobil</strong><small>APK, AAB, IPA</small></span>
+              </button>
+              <button class="target-tab" type="button" role="tab" aria-selected="false" data-mode="desktop">
+                <span class="tab-icon" aria-hidden="true">▣</span>
+                <span><strong>Masaustu</strong><small>Uygulama paketi</small></span>
+              </button>
+            </div>
+
+            <form id="scan-form" novalidate>
+              <div id="web-target-panel" class="target-panel">
+                <label for="url-input">Hedef URL</label>
+                <div class="url-field">
+                  <span aria-hidden="true">https://</span>
+                  <input
+                    id="url-input"
+                    name="url"
+                    type="url"
+                    inputmode="url"
+                    autocomplete="off"
+                    autocapitalize="none"
+                    spellcheck="false"
+                    maxlength="2048"
+                    placeholder="ornek.com"
+                    aria-describedby="url-help url-error"
+                  />
+                </div>
+                <p id="url-help" class="field-help">Yalnizca http:// veya https:// hedefleri kabul edilir.</p>
+                <p id="url-error" class="field-error" role="alert"></p>
+              </div>
+
+              <div id="local-target-panel" class="target-panel" hidden>
+                <label>Yerel hedef</label>
+                <div class="picker-actions">
+                  <button id="pick-file" class="secondary-button" type="button">
+                    <span aria-hidden="true">＋</span> Dosya sec
+                  </button>
+                  <button id="pick-directory" class="secondary-button" type="button">
+                    <span aria-hidden="true">⌁</span> Klasor sec
+                  </button>
+                </div>
+                <div id="selected-target" class="selected-target" hidden>
+                  <span class="selected-icon" aria-hidden="true">✓</span>
+                  <span><strong id="selected-label"></strong><small id="selected-path"></small></span>
+                  <button id="clear-target" type="button" aria-label="Secili hedefi kaldir">×</button>
+                </div>
+                <p id="picker-error" class="field-error" role="alert"></p>
+              </div>
+
+              <div class="divider"></div>
+
+              <div class="section-heading compact">
+                <div>
+                  <span class="step-number">02</span>
+                  <div>
+                    <h2>Tarama profili</h2>
+                    <p>Hedefe uygun etkilesim duzeyini belirleyin.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="profile-grid">
+                <label class="profile-card">
+                  <input type="radio" name="profile" value="observe" checked />
+                  <span class="radio-mark"></span>
+                  <span><strong>Observe</strong><small>Dusuk etkili gozlem ve yapilandirma analizi</small></span>
+                  <span class="profile-tag">Onerilen</span>
+                </label>
+                <label class="profile-card">
+                  <input type="radio" name="profile" value="safe" />
+                  <span class="radio-mark"></span>
+                  <span><strong>Safe</strong><small>Kontrollu, guvenli aktif kontroller</small></span>
+                  <span class="profile-tag muted">Daha derin</span>
+                </label>
+              </div>
+
+              <label class="authorization">
+                <input id="authorization" type="checkbox" />
+                <span class="checkmark" aria-hidden="true">✓</span>
+                <span>Bu hedefi tarama yetkim oldugunu ve taramanin sistem uzerinde yuk olusturabilecegini onayliyorum.</span>
+              </label>
+
+              <div class="form-footer">
+                <div class="limits">
+                  <span>15 dk sure siniri</span>
+                  <span>8 MB cikti siniri</span>
+                </div>
+                <button id="start-scan" class="primary-button" type="submit" disabled>
+                  <span>Taramayi baslat</span><span aria-hidden="true">→</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <aside class="workspace-aside" aria-label="Tarama bilgileri">
+            <div class="aside-card">
+              <p class="aside-label">Guvenlik siniri</p>
+              <h3>Yerel yol erisimi kontrollu</h3>
+              <p>Dosya ve klasor yollari metin olarak girilemez; yalnizca isletim sisteminin secim penceresi kullanilir.</p>
+              <ul>
+                <li><span>01</span> Hedef secilir</li>
+                <li><span>02</span> Yerel kimlik uretilir</li>
+                <li><span>03</span> CLI sinirli surecle calisir</li>
+              </ul>
+            </div>
+            <div class="notice-card">
+              <span aria-hidden="true">!</span>
+              <p><strong>Yalnizca yetkili sistemleri tarayin.</strong> Izinsiz guvenlik testi hukuki ve operasyonel risk dogurabilir.</p>
+            </div>
+          </aside>
+        </section>
+
+        <section id="scan-status" class="scan-status" aria-live="polite" hidden>
+          <div>
+            <span id="status-spinner" class="spinner" aria-hidden="true"></span>
+            <span><strong id="status-title">Tarama calisiyor</strong><small id="status-message">Katmanlar analiz ediliyor…</small></span>
+          </div>
+          <button id="cancel-scan" class="danger-button" type="button">Taramayi iptal et</button>
+        </section>
+
+        <section id="result-panel" class="result-panel" aria-labelledby="result-title" hidden>
+          <div class="result-heading">
+            <div>
+              <p class="eyebrow">Tarama ciktisi</p>
+              <h2 id="result-title">Rapor</h2>
+            </div>
+            <span id="result-meta"></span>
+          </div>
+          <pre id="result-output" tabindex="0"></pre>
+        </section>
+      </main>
+
+      <footer>
+        <span>WebCyber Desktop · Acik kaynak guvenlik platformu</span>
+        <span>Yerel oncelikli · Dar IPC · Imzali motor icin hazir</span>
+      </footer>
+    </div>
+  </body>
+</html>
