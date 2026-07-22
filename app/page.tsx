@@ -52,7 +52,7 @@ const targetConfig: Record<
   },
   source: {
     label: "Depo veya proje yolu",
-    placeholder: "/projeler/api veya git@github.com:ekip/api.git",
+    placeholder: "/projeler/api",
     hint: "Yerel klasörler ajan üzerinden salt okunur bağlanır.",
   },
   mobile: {
@@ -432,9 +432,9 @@ export default function Home() {
         </div>
 
         <div className="sidebar-footer">
-          <span className="user-avatar">IA</span>
+          <span className="user-avatar">WC</span>
           <span>
-            <strong>İlyas Akkuş</strong>
+            <strong>Yerel kullanıcı</strong>
             <small>Proje yöneticisi</small>
           </span>
           <button type="button" aria-label="Hesap menüsü">
@@ -490,7 +490,7 @@ export default function Home() {
               <span className="notification-pip" />
             </button>
             <div className="environment-chip">
-              <span /> Canlı sistem
+              <span /> Yerel demo
             </div>
           </div>
         </header>
@@ -519,7 +519,7 @@ export default function Home() {
           <section className="page-heading" id="overview">
             <div>
               <span className="eyebrow">22 TEMMUZ 2026 · SON 24 SAAT</span>
-              <h1>Günaydın, İlyas.</h1>
+              <h1>Günaydın, ekip.</h1>
               <p>Varlıklarınızın risk görünümü ve devam eden güvenli taramalar.</p>
             </div>
             <a className="primary-action" href="#new-scan">
@@ -665,7 +665,7 @@ export default function Home() {
                       autoComplete="off"
                       spellCheck="false"
                     />
-                    <span className="input-status">Kapsamlı</span>
+                    <span className="input-status">Kapsam sınırı</span>
                   </div>
                   <span className="field-hint">{targetConfig[targetType].hint}</span>
                 </div>
@@ -716,7 +716,7 @@ export default function Home() {
                         <strong>Observe</strong>
                         <small>Pasif keşif</small>
                       </span>
-                      <em>0 istek</em>
+                      <em>Salt okunur</em>
                     </button>
                     <button
                       className={`profile-card ${profile === "safe" ? "selected" : ""}`}
@@ -857,7 +857,7 @@ export default function Home() {
             <div className="findings-header">
               <div>
                 <span className="section-kicker">RİSK GÖRÜNÜMÜ</span>
-                <h2>Son bulgular</h2>
+                <h2>Örnek bulgular</h2>
                 <p>Güven seviyesi, teknik şiddet ve doğrulama durumu ayrı değerlendirilir.</p>
               </div>
               <button

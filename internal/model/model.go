@@ -146,7 +146,14 @@ func Fingerprint(f Finding) string {
 		strings.ToLower(strings.TrimSpace(f.Module)),
 		strings.TrimSpace(f.Evidence.Location),
 		fmt.Sprintf("%d", f.Evidence.Line),
-		strings.ToLower(strings.TrimSpace(f.Evidence.URL)),
+		strings.TrimSpace(f.Evidence.URL),
+	}
+	// Only known non-secret discriminators participate. Snippets and arbitrary
+	// detail values never influence the published fingerprint.
+	for _, key := range []string{"candidate_type", "component_type", "cookie_name", "dependency", "entry", "format", "header", "occurrence"} {
+		if value := f.Evidence.Details[key]; value != "" {
+			parts = append(parts, key+"="+value)
+		}
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -156,6 +163,7 @@ func Fingerprint(f Finding) string {
 func NormalizeFindings(in []Finding) []Finding {
 	unique := make(map[string]Finding, len(in))
 	for _, finding := range in {
+		finding = sanitizeFinding(finding)
 		if finding.Fingerprint == "" {
 			finding.Fingerprint = Fingerprint(finding)
 		}
@@ -180,6 +188,41 @@ func NormalizeFindings(in []Finding) []Finding {
 		return out[i].Evidence.Line < out[j].Evidence.Line
 	})
 	return out
+}
+
+func sanitizeFinding(f Finding) Finding {
+	f.RuleID = truncateRunes(f.RuleID, 200)
+	f.Module = truncateRunes(f.Module, 100)
+	f.Title = truncateRunes(f.Title, 300)
+	f.Description = truncateRunes(f.Description, 2_000)
+	f.Remediation = truncateRunes(f.Remediation, 2_000)
+	f.Evidence.Location = truncateRunes(f.Evidence.Location, 1_024)
+	f.Evidence.URL = truncateRunes(f.Evidence.URL, 2_048)
+	f.Evidence.Snippet = truncateRunes(f.Evidence.Snippet, 512)
+	if len(f.Evidence.Details) > 0 {
+		keys := make([]string, 0, len(f.Evidence.Details))
+		for key := range f.Evidence.Details {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		if len(keys) > 32 {
+			keys = keys[:32]
+		}
+		limited := make(map[string]string, len(keys))
+		for _, key := range keys {
+			limited[truncateRunes(key, 100)] = truncateRunes(f.Evidence.Details[key], 512)
+		}
+		f.Evidence.Details = limited
+	}
+	return f
+}
+
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "..."
 }
 
 func BuildSummary(findings []Finding) Summary {

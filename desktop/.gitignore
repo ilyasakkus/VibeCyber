@@ -2,3 +2,7 @@ node_modules/
 dist/
 out/
 *.log
+resources/bin/webcyber
+resources/bin/webcyber.exe
+resources/bin/webcyber.sha256
+resources/bin/webcyber.exe.sha256

@@ -23,11 +23,12 @@ const (
 // inspectBinaryProtection parses only bounded executable headers. It never
 // loads or executes the artifact and avoids general-purpose binary parsers.
 func inspectBinaryProtection(record fileRecord, report *model.Report) (recognized bool, complete bool, format string) {
-	f, err := os.Open(record.Absolute)
+	f, openedInfo, err := openRegularNoFollow(record.Absolute)
 	if err != nil {
 		return false, false, ""
 	}
 	defer f.Close()
+	record.Info = openedInfo
 	head := make([]byte, 64)
 	n, err := io.ReadFull(f, head)
 	if err != nil && err != io.ErrUnexpectedEOF {
@@ -92,7 +93,7 @@ func inspectPEHeader(f *os.File, record fileRecord, report *model.Report, head [
 	}
 	for _, check := range checks {
 		if characteristics&check.mask == 0 {
-			report.Findings = append(report.Findings, model.Finding{
+			appendFinding(report, model.Finding{
 				RuleID: check.rule, Module: "binary-protection", Title: check.title, Severity: check.severity, Confidence: "high", CWE: "CWE-693",
 				Description: "A bounded parse of the PE optional header did not find the expected mitigation flag.", Remediation: check.remediation,
 				Evidence: model.Evidence{Location: record.Relative, Details: map[string]string{"format": "PE", "dll_characteristics": fmt.Sprintf("0x%04x", characteristics)}},
@@ -197,7 +198,7 @@ func inspectMachOHeader(record fileRecord, report *model.Report, head []byte) bo
 }
 
 func appendBinaryFinding(report *model.Report, location, rule, title string, severity model.Severity, description, remediation, format string) {
-	report.Findings = append(report.Findings, model.Finding{
+	appendFinding(report, model.Finding{
 		RuleID: rule, Module: "binary-protection", Title: title, Severity: severity, Confidence: "high", CWE: "CWE-693",
 		Description: description, Remediation: remediation, Evidence: model.Evidence{Location: location, Details: map[string]string{"format": format}},
 	})

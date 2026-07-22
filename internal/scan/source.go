@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/webcyber/webcyber/internal/model"
 )
@@ -45,6 +44,7 @@ type sourceStats struct {
 	truncatedFiles  int
 	readErrors      int
 	bytesRead       int64
+	lineLimitHit    bool
 	manifestCount   int
 	dependencyCount int
 	electronFiles   int
@@ -89,7 +89,9 @@ func (e *Engine) scanSource(ctx context.Context, _ Config, report *model.Report)
 		}
 		stats.textFiles++
 		before := len(report.Findings)
-		inspectSecrets(record.Relative, data, report)
+		if inspectSecrets(record.Relative, data, report) {
+			stats.lineLimitHit = true
+		}
 		secretFindings += len(report.Findings) - before
 
 		before = len(report.Findings)
@@ -106,12 +108,12 @@ func (e *Engine) scanSource(ctx context.Context, _ Config, report *model.Report)
 		dependencyFindings += len(report.Findings) - before
 	}
 
-	limited := walk.LimitHit || stats.totalLimitHit || stats.truncatedFiles > 0 || stats.readErrors > 0
+	limited := walk.LimitHit || walk.Symlinks > 0 || walk.FilesSkipped > 0 || stats.totalLimitHit || stats.lineLimitHit || stats.truncatedFiles > 0 || stats.readErrors > 0
 	status := model.ModuleComplete
 	limitations := []string(nil)
 	if limited {
 		status = model.ModulePartial
-		limitations = append(limitations, "One or more path, count, size, or read limits prevented full coverage.")
+		limitations = append(limitations, "One or more symlink, path, count, size, or read boundaries prevented full coverage.")
 	}
 	report.Modules = append(report.Modules,
 		model.ModuleResult{Name: "file-inventory", Status: status, Summary: fmt.Sprintf("Enumerated %d regular files; skipped %d symbolic links and %d unreadable or unsupported entries.", len(files), walk.Symlinks, walk.FilesSkipped+stats.readErrors), ItemsSeen: len(files), Limitations: limitations},
@@ -126,12 +128,14 @@ func (e *Engine) scanSource(ctx context.Context, _ Config, report *model.Report)
 	return nil
 }
 
-func inspectSecrets(path string, data []byte, report *model.Report) {
+func inspectSecrets(path string, data []byte, report *model.Report) bool {
+	lineLimitHit := false
 	lines := strings.Split(string(data), "\n")
 	for index, rawLine := range lines {
 		line := strings.TrimSpace(rawLine)
 		if len(line) > 20_000 {
 			line = line[:20_000]
+			lineLimitHit = true
 		}
 		if awsAccessKeyPattern.MatchString(line) {
 			appendSecretFinding(report, "source.secret.aws-access-key", "Possible AWS access key", model.SeverityCritical, "CWE-798", path, index+1, "AWS access key identifier")
@@ -150,10 +154,11 @@ func inspectSecrets(path string, data []byte, report *model.Report) {
 			appendSecretFinding(report, "source.secret.generic", "Possible hardcoded secret", model.SeverityHigh, "CWE-798", path, index+1, strings.ToLower(match[1]))
 		}
 	}
+	return lineLimitHit
 }
 
 func appendSecretFinding(report *model.Report, rule, title string, severity model.Severity, cwe, path string, line int, kind string) {
-	report.Findings = append(report.Findings, model.Finding{
+	appendFinding(report, model.Finding{
 		RuleID: rule, Module: "secret-detection", Title: title, Severity: severity, Confidence: "medium", CWE: cwe,
 		Description: "Static analysis found text shaped like credential material. The value was redacted before reporting.",
 		Remediation: "Verify the candidate, revoke and rotate it if real, remove it from history, and load credentials from an approved secret store.",
@@ -215,7 +220,7 @@ func inspectElectron(path string, data []byte, report *model.Report) {
 	for index, line := range lines {
 		for _, check := range electronChecks {
 			if check.pattern.MatchString(line) {
-				report.Findings = append(report.Findings, model.Finding{
+				appendFinding(report, model.Finding{
 					RuleID: check.rule, Module: "electron-configuration", Title: check.title, Severity: check.severity, Confidence: "high", CWE: check.cwe,
 					Description: "A security-sensitive Electron preference is configured to an unsafe literal value.", Remediation: check.remediation,
 					Evidence: model.Evidence{Location: path, Line: index + 1, Snippet: check.pattern.FindString(line)},
@@ -268,7 +273,7 @@ func inspectPackageJSON(path string, data []byte, report *model.Report) int {
 			count++
 			specification := strings.TrimSpace(dependencies[name])
 			if unsafeDependencySpecification(specification) {
-				report.Findings = append(report.Findings, model.Finding{
+				appendFinding(report, model.Finding{
 					RuleID: "source.dependency.unbounded-specification", Module: "dependency-inventory", Title: "Dependency uses an unsafe or non-reproducible specification", Severity: model.SeverityMedium, Confidence: "high", CWE: "CWE-829",
 					Description: "A dependency is sourced from a floating tag, wildcard, URL, Git repository, or local path.", Remediation: "Use a reviewed registry release and a lockfile with integrity metadata.",
 					Evidence: model.Evidence{Location: path, Details: map[string]string{"dependency": name, "specification_type": dependencySpecificationType(specification)}},
@@ -311,18 +316,34 @@ func inspectRequirements(path string, data []byte, report *model.Report) int {
 		}
 		count++
 		if !strings.Contains(line, "==") || strings.Contains(line, "://") || strings.HasPrefix(line, "git+") {
-			name := line
-			if position := strings.IndexAny(name, "<>=!~ @;"); position >= 0 {
-				name = name[:position]
-			}
-			report.Findings = append(report.Findings, model.Finding{
+			name := safePythonDependencyName(line)
+			appendFinding(report, model.Finding{
 				RuleID: "source.dependency.python-unpinned", Module: "dependency-inventory", Title: "Python dependency is not exactly pinned", Severity: model.SeverityLow, Confidence: "high", CWE: "CWE-829",
 				Description: "A direct Python requirement is not fixed to an exact registry version.", Remediation: "Pin reviewed direct dependencies and use a hash-locked transitive dependency workflow.",
-				Evidence: model.Evidence{Location: path, Line: index + 1, Details: map[string]string{"dependency": strings.TrimFunc(name, unicode.IsSpace)}},
+				Evidence: model.Evidence{Location: path, Line: index + 1, Details: map[string]string{"dependency": name}},
 			})
 		}
 	}
 	return count
+}
+
+func safePythonDependencyName(line string) string {
+	line = strings.TrimSpace(line)
+	if strings.Contains(line, "://") || strings.HasPrefix(strings.ToLower(line), "git+") {
+		return "[URL dependency]"
+	}
+	end := 0
+	for end < len(line) {
+		value := line[end]
+		if !((value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9') || value == '.' || value == '_' || value == '-') {
+			break
+		}
+		end++
+	}
+	if end == 0 {
+		return "[unparsed dependency]"
+	}
+	return line[:end]
 }
 
 func approximateManifestEntries(base string, data []byte) int {

@@ -3,7 +3,6 @@ package scan
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/webcyber/webcyber/internal/model"
@@ -49,11 +48,15 @@ func (e *Engine) scanDesktop(ctx context.Context, _ Config, report *model.Report
 		if strings.HasSuffix(lower, ".asar") {
 			stats.asars++
 		}
-		if strings.HasSuffix(lower, ".zip") && stats.archives < 20 {
-			stats.archives++
-			archive, archiveErr := inspectZIP(record.Absolute, record.Relative, e.limits, report, nil)
-			if archiveErr != nil || archive.LimitHit {
+		if strings.HasSuffix(lower, ".zip") {
+			if stats.archives >= 20 {
 				stats.archiveLimitHit = true
+			} else {
+				stats.archives++
+				archive, archiveErr := inspectZIP(record.Absolute, record.Relative, e.limits, report, nil)
+				if archiveErr != nil || archive.LimitHit {
+					stats.archiveLimitHit = true
+				}
 			}
 		}
 		recognized, complete, format := inspectBinaryProtection(record, report)
@@ -88,22 +91,24 @@ func (e *Engine) scanDesktop(ctx context.Context, _ Config, report *model.Report
 
 	archiveStatus := model.ModuleSkipped
 	archiveSummary := "No desktop ZIP container was found in the bounded inventory."
+	archiveLimitations := []string(nil)
 	if stats.archives > 0 {
 		archiveStatus = model.ModuleComplete
 		archiveSummary = fmt.Sprintf("Inspected %d ZIP containers without extraction.", stats.archives)
 		if stats.archiveLimitHit {
 			archiveStatus = model.ModulePartial
+			archiveLimitations = []string{"At least one container or archive-count boundary prevented complete ZIP inspection."}
 		}
 	}
 	electronStatus := model.ModuleComplete
 	electronLimits := []string(nil)
-	if stats.asars > 0 || stats.readLimitHit || walk.LimitHit {
+	if stats.asars > 0 || stats.readLimitHit || walk.LimitHit || walk.Symlinks > 0 || walk.FilesSkipped > 0 {
 		electronStatus = model.ModulePartial
 		if stats.asars > 0 {
 			electronLimits = append(electronLimits, fmt.Sprintf("Detected %d ASAR files; dependency-free MVP records but does not unpack ASAR.", stats.asars))
 		}
-		if stats.readLimitHit || walk.LimitHit {
-			electronLimits = append(electronLimits, "File, depth, or byte limits reduced configuration coverage.")
+		if stats.readLimitHit || walk.LimitHit || walk.Symlinks > 0 || walk.FilesSkipped > 0 {
+			electronLimits = append(electronLimits, "Symlink, file, depth, or byte boundaries reduced configuration coverage.")
 		}
 	}
 	formatMetadata := make(map[string]string)
@@ -111,12 +116,10 @@ func (e *Engine) scanDesktop(ctx context.Context, _ Config, report *model.Report
 		formatMetadata[strings.ToLower(format)+"_count"] = fmt.Sprintf("%d", count)
 	}
 	report.Modules = append(report.Modules,
-		model.ModuleResult{Name: "archive-security", Status: archiveStatus, Summary: archiveSummary, ItemsSeen: stats.archives},
+		model.ModuleResult{Name: "archive-security", Status: archiveStatus, Summary: archiveSummary, ItemsSeen: stats.archives, Limitations: archiveLimitations},
 		model.ModuleResult{Name: "electron-configuration", Status: electronStatus, Summary: fmt.Sprintf("Inspected %d Electron-relevant files and produced %d configuration findings.", stats.electronFiles, stats.electronFindings), ItemsSeen: stats.electronFiles, Limitations: electronLimits},
 		model.ModuleResult{Name: "binary-protection", Status: model.ModulePartial, Summary: fmt.Sprintf("Recognized %d PE/ELF/Mach-O binaries and safely parsed bounded headers for %d.", stats.binaries, stats.binaryParsed), ItemsSeen: stats.binaries, Metadata: formatMetadata, Limitations: []string{"Header checks cover common ASLR/DEP/CFG, PIE, stack, and RELRO flags only; code signing, entitlements, packed binaries, fat Mach-O slices, and control-flow analysis require an isolated deep-analysis worker."}},
 	)
 	report.Limitations = append(report.Limitations, "Desktop analysis never launches the program, loads its libraries, mounts disk images, or invokes platform tools.")
 	return nil
 }
-
-func desktopExtension(path string) string { return strings.ToLower(filepath.Ext(path)) }

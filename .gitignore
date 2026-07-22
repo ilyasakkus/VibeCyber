@@ -13,6 +13,7 @@
 
 # testing
 /coverage
+/.cache/
 
 # next.js
 /.next/
@@ -43,5 +44,8 @@ next-env.d.ts
 /work/
 /desktop/dist/
 /desktop/resources/bin/webcyber
+/desktop/resources/bin/webcyber.exe
+/desktop/resources/bin/webcyber.sha256
+/desktop/resources/bin/webcyber.exe.sha256
 /webcyber
 *.sarif

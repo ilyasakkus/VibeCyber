@@ -47,7 +47,7 @@ veya kullanıcının kurduğu yerel agent üzerinde çalışır. Ayrıntılar i�
 ## Gereksinimler
 
 - Node.js 22.13 veya üzeri
-- Go 1.25 veya üzeri
+- Go 1.22 veya üzeri
 - Masaüstü geliştirme için Electron'ın desteklediği bir işletim sistemi
 
 ## Çalıştırma
@@ -79,8 +79,8 @@ go run ./cmd/webcyber scan \
 Masaüstü kabuğu:
 
 ```bash
-go build -o desktop/resources/bin/webcyber ./cmd/webcyber
 npm --prefix desktop install
+npm --prefix desktop run prepare:scanner
 npm --prefix desktop start
 ```
 

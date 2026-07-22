@@ -12,6 +12,10 @@ import (
 
 const Version = "0.1.0"
 
+// The report cap is a safety invariant for CLI/UI consumers. Combined with
+// bounded evidence strings, it keeps output comfortably below desktop limits.
+const maxReportFindings = 2_000
+
 type Config struct {
 	Type    model.ScanType
 	Target  string
@@ -19,6 +23,7 @@ type Config struct {
 }
 
 type Limits struct {
+	ScanTimeout          time.Duration
 	HTTPTimeout          time.Duration
 	DialTimeout          time.Duration
 	MaxHTTPBodyBytes     int64
@@ -35,6 +40,7 @@ type Limits struct {
 
 func DefaultLimits() Limits {
 	return Limits{
+		ScanTimeout:          2 * time.Minute,
 		HTTPTimeout:          15 * time.Second,
 		DialTimeout:          5 * time.Second,
 		MaxHTTPBodyBytes:     1 << 20,
@@ -59,6 +65,11 @@ func New(limits Limits) *Engine { return &Engine{limits: limits} }
 func NewDefault() *Engine { return New(DefaultLimits()) }
 
 func (e *Engine) Scan(ctx context.Context, cfg Config) (model.Report, error) {
+	if e.limits.ScanTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, e.limits.ScanTimeout)
+		defer cancel()
+	}
 	started := time.Now().UTC()
 	report := model.Report{
 		SchemaVersion: model.SchemaVersion,
@@ -96,6 +107,9 @@ func (e *Engine) Scan(ctx context.Context, cfg Config) (model.Report, error) {
 	case model.ScanTypeDesktop:
 		err = e.scanDesktop(ctx, cfg, &report)
 	}
+	if err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+		report.Modules = append(report.Modules, model.ModuleResult{Name: "scan-budget", Status: model.ModuleError, Summary: "The scan stopped before all modules completed.", Errors: []string{err.Error()}})
+	}
 
 	report.Findings = model.NormalizeFindings(report.Findings)
 	report.Summary = model.BuildSummary(report.Findings)
@@ -125,4 +139,18 @@ func finish(report model.Report, started time.Time, status string) model.Report 
 		report.Modules = []model.ModuleResult{}
 	}
 	return report
+}
+
+func appendFinding(report *model.Report, finding model.Finding) {
+	if len(report.Findings) < maxReportFindings {
+		report.Findings = append(report.Findings, finding)
+		return
+	}
+	const limitation = "Finding output stopped at the safety limit of 2000 records; narrow the target or split the scan for full coverage."
+	for _, existing := range report.Limitations {
+		if existing == limitation {
+			return
+		}
+	}
+	report.Limitations = append(report.Limitations, limitation)
 }

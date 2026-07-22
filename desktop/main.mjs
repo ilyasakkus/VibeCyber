@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   accessSync,
   constants as fsConstants,
+  readFileSync,
   realpathSync,
   statSync,
 } from "node:fs";
@@ -16,19 +17,28 @@ const RENDERER_FILE = path.join(APP_DIRECTORY, "renderer", "index.html");
 const RENDERER_URL = pathToFileURL(RENDERER_FILE).href;
 const SESSION_PARTITION = "webcyber-desktop";
 
-const SCAN_TYPES = new Set(["source", "mobile", "desktop"]);
+const SCAN_TYPES = new Set(["web", "source", "mobile", "desktop"]);
+const LOCAL_SCAN_TYPES = new Set(["source", "mobile", "desktop"]);
 const SCAN_PROFILES = new Set(["observe", "safe"]);
+const SEVERITIES = new Set(["critical", "high", "medium", "low", "info"]);
+const MODULE_STATUSES = new Set(["complete", "partial", "skipped", "error"]);
 const PATH_KINDS = new Set(["file", "directory"]);
 const MAX_SELECTED_TARGETS = 32;
+const TARGET_TTL_MS = 10 * 60 * 1_000;
 const MAX_URL_LENGTH = 2_048;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 1024 * 1024;
 const MAX_ERROR_TEXT_BYTES = 64 * 1024;
+const MAX_REPORT_DEPTH = 64;
+const MAX_REPORT_NODES = 100_000;
+const MAX_REPORT_STRING_BYTES = 1024 * 1024;
+const MAX_SCANNER_BINARY_BYTES = 256 * 1024 * 1024;
 const SCAN_TIMEOUT_MS = 15 * 60 * 1_000;
 const GRACEFUL_KILL_MS = 2_000;
 
 const CHANNELS = Object.freeze({
   pickTarget: "target:pick",
+  releaseTarget: "target:release",
   startScan: "scan:start",
   cancelScan: "scan:cancel",
   scanFinished: "scan:finished",
@@ -37,7 +47,10 @@ const CHANNELS = Object.freeze({
 const selectedTargets = new Map();
 const activeJobs = new Map();
 let mainWindow = null;
-let targetDialogOpen = false;
+let nativeDialogOpen = false;
+let quitRequested = false;
+let allowQuit = false;
+let quitDeadline = null;
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -57,11 +70,19 @@ function assertOnlyKeys(value, allowedKeys, label) {
 
 function assertTrustedSender(event) {
   const trustedContents = mainWindow?.webContents;
+  let senderUrl = null;
+  try {
+    senderUrl = new URL(event.senderFrame?.url ?? "");
+    senderUrl.hash = "";
+  } catch {
+    // The checks below reject malformed or missing frame URLs.
+  }
   if (
     !trustedContents ||
     trustedContents.isDestroyed() ||
     event.sender.id !== trustedContents.id ||
-    event.senderFrame?.url !== RENDERER_URL
+    event.senderFrame !== trustedContents.mainFrame ||
+    senderUrl?.href !== RENDERER_URL
   ) {
     throw new Error("Guvenilmeyen IPC istegi reddedildi.");
   }
@@ -139,6 +160,48 @@ function scannerBinaryName() {
   return process.platform === "win32" ? "webcyber.exe" : "webcyber";
 }
 
+function verifyBundledBinaryHash(binaryPath, binDirectory) {
+  const manifestPath = path.join(binDirectory, `${scannerBinaryName()}.sha256`);
+  let canonicalManifest;
+  try {
+    canonicalManifest = realpathSync.native(manifestPath);
+  } catch {
+    throw new Error(`Tarama motoru SHA-256 manifesti bulunamadi: ${manifestPath}`);
+  }
+
+  const manifestStats = statSync(canonicalManifest);
+  const binaryStats = statSync(binaryPath);
+  if (
+    !isStrictlyInside(binDirectory, canonicalManifest) ||
+    !manifestStats.isFile() ||
+    manifestStats.size > 256 ||
+    binaryStats.size > MAX_SCANNER_BINARY_BYTES
+  ) {
+    throw new Error("Tarama motoru veya SHA-256 manifesti guvenlik sinirini asti.");
+  }
+
+  const expectedHex = readFileSync(canonicalManifest, "utf8").trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(expectedHex)) {
+    throw new Error("Tarama motoru SHA-256 manifesti gecersiz.");
+  }
+
+  const expectedHash = Buffer.from(expectedHex, "hex");
+  const actualHash = createHash("sha256").update(readFileSync(binaryPath)).digest();
+  if (!timingSafeEqual(actualHash, expectedHash)) {
+    throw new Error("Tarama motoru butunluk dogrulamasini gecemedi.");
+  }
+}
+
+function isStrictlyInside(parentPath, candidatePath) {
+  const relativePath = path.relative(parentPath, candidatePath);
+  return (
+    relativePath !== "" &&
+    relativePath !== ".." &&
+    !relativePath.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relativePath)
+  );
+}
+
 function resolveScannerBinary() {
   const developmentOverride = process.env.WEB_CYBER_SCANNER_BIN?.trim();
 
@@ -159,7 +222,18 @@ function resolveScannerBinary() {
   if (!isRunnableFile(bundledBinary)) {
     throw new Error(`WebCyber tarama motoru bulunamadi: ${bundledBinary}`);
   }
-  return realpathSync.native(bundledBinary);
+
+  const canonicalResourcesRoot = realpathSync.native(resourcesRoot);
+  const canonicalBinDirectory = realpathSync.native(path.dirname(bundledBinary));
+  const canonicalBinary = realpathSync.native(bundledBinary);
+  if (
+    !isStrictlyInside(canonicalResourcesRoot, canonicalBinDirectory) ||
+    !isStrictlyInside(canonicalBinDirectory, canonicalBinary)
+  ) {
+    throw new Error("Paketli tarama motoru resources/bin sinirinin disina cikamaz.");
+  }
+  verifyBundledBinaryHash(canonicalBinary, canonicalBinDirectory);
+  return canonicalBinary;
 }
 
 function restrictedEnvironment() {
@@ -206,6 +280,7 @@ function fileFiltersFor(scanType) {
 }
 
 function rememberSelectedTarget(ownerId, scanType, pathKind, selectedPath) {
+  pruneExpiredTargets();
   const resolvedPath = realpathSync.native(selectedPath);
   const stats = statSync(resolvedPath);
   const matchesKind = pathKind === "file" ? stats.isFile() : stats.isDirectory();
@@ -224,6 +299,9 @@ function rememberSelectedTarget(ownerId, scanType, pathKind, selectedPath) {
     scanType,
     pathKind,
     path: resolvedPath,
+    device: stats.dev,
+    inode: stats.ino,
+    expiresAt: Date.now() + TARGET_TTL_MS,
   });
 
   return {
@@ -234,14 +312,26 @@ function rememberSelectedTarget(ownerId, scanType, pathKind, selectedPath) {
   };
 }
 
+function pruneExpiredTargets() {
+  const now = Date.now();
+  for (const [targetId, target] of selectedTargets) {
+    if (target.expiresAt <= now) {
+      selectedTargets.delete(targetId);
+    }
+  }
+}
+
 function resolveScanTarget(payload, ownerId, scanType) {
   assertOnlyKeys(payload, new Set(["kind", "id", "value"]), "Hedef");
 
   if (payload.kind === "url") {
-    if (scanType !== "source" || "id" in payload) {
-      throw new TypeError("URL hedefi kaynak taramasi olarak calistirilmalidir.");
+    if (scanType !== "web" || "id" in payload) {
+      throw new TypeError("URL hedefi web taramasi olarak calistirilmalidir.");
     }
-    return validateUrlTarget(payload.value);
+    return {
+      value: validateUrlTarget(payload.value),
+      capabilityId: null,
+    };
   }
 
   if (payload.kind === "local") {
@@ -249,6 +339,7 @@ function resolveScanTarget(payload, ownerId, scanType) {
       throw new TypeError("Gecersiz yerel hedef kimligi.");
     }
 
+    pruneExpiredTargets();
     const selected = selectedTargets.get(payload.id);
     if (
       !selected ||
@@ -260,13 +351,112 @@ function resolveScanTarget(payload, ownerId, scanType) {
     }
 
     const currentPath = realpathSync.native(selected.path);
-    if (currentPath !== selected.path) {
+    const currentStats = statSync(currentPath);
+    const matchesKind =
+      selected.pathKind === "file" ? currentStats.isFile() : currentStats.isDirectory();
+    if (
+      currentPath !== selected.path ||
+      !matchesKind ||
+      currentStats.dev !== selected.device ||
+      currentStats.ino !== selected.inode
+    ) {
       throw new Error("Yerel hedef secimden sonra degisti; yeniden secin.");
     }
-    return currentPath;
+    return {
+      value: currentPath,
+      capabilityId: payload.id,
+    };
   }
 
   throw new TypeError("Gecersiz hedef turu.");
+}
+
+function validateReportValue(report) {
+  if (!isRecord(report)) {
+    throw new TypeError("Tarama raporunun kok degeri bir nesne olmalidir.");
+  }
+
+  const pending = [{ value: report, depth: 0 }];
+  let visitedNodes = 0;
+  while (pending.length > 0) {
+    const { value, depth } = pending.pop();
+    visitedNodes += 1;
+    if (visitedNodes > MAX_REPORT_NODES || depth > MAX_REPORT_DEPTH) {
+      throw new TypeError("Tarama raporu yapi sinirini asti.");
+    }
+
+    if (typeof value === "string") {
+      if (Buffer.byteLength(value, "utf8") > MAX_REPORT_STRING_BYTES) {
+        throw new TypeError("Tarama raporundaki bir metin siniri asti.");
+      }
+      continue;
+    }
+    if (value === null || typeof value === "boolean" || typeof value === "number") {
+      continue;
+    }
+    if (!Array.isArray(value) && !isRecord(value)) {
+      throw new TypeError("Tarama raporu desteklenmeyen bir deger iceriyor.");
+    }
+
+    const entries = Array.isArray(value) ? value.entries() : Object.entries(value);
+    for (const [key, child] of entries) {
+      if (typeof key === "string" && key.length > 512) {
+        throw new TypeError("Tarama raporundaki bir alan adi siniri asti.");
+      }
+      pending.push({ value: child, depth: depth + 1 });
+    }
+  }
+}
+
+function validateReportSchema(report, expectedScanType, expectedProfile) {
+  const summaryKeys = ["total", "critical", "high", "medium", "low", "info"];
+  if (
+    report.schema_version !== "1.0" ||
+    !isRecord(report.tool) ||
+    report.tool.name !== "WebCyber" ||
+    typeof report.tool.version !== "string" ||
+    !isRecord(report.scan) ||
+    report.scan.type !== expectedScanType ||
+    report.scan.profile !== expectedProfile ||
+    typeof report.scan.id !== "string" ||
+    typeof report.scan.status !== "string" ||
+    !isRecord(report.summary) ||
+    !Array.isArray(report.modules) ||
+    report.modules.length > 1_000 ||
+    !Array.isArray(report.findings) ||
+    report.findings.length > 25_000
+  ) {
+    throw new TypeError("Tarama raporu beklenen WebCyber 1.0 semasiyla uyusmuyor.");
+  }
+
+  for (const key of summaryKeys) {
+    if (!Number.isSafeInteger(report.summary[key]) || report.summary[key] < 0) {
+      throw new TypeError("Tarama raporu gecersiz bir ozet iceriyor.");
+    }
+  }
+  for (const moduleResult of report.modules) {
+    if (
+      !isRecord(moduleResult) ||
+      typeof moduleResult.name !== "string" ||
+      !MODULE_STATUSES.has(moduleResult.status) ||
+      typeof moduleResult.summary !== "string"
+    ) {
+      throw new TypeError("Tarama raporu gecersiz bir modul sonucu iceriyor.");
+    }
+  }
+  for (const finding of report.findings) {
+    if (
+      !isRecord(finding) ||
+      typeof finding.rule_id !== "string" ||
+      typeof finding.fingerprint !== "string" ||
+      typeof finding.module !== "string" ||
+      typeof finding.title !== "string" ||
+      typeof finding.description !== "string" ||
+      !SEVERITIES.has(finding.severity)
+    ) {
+      throw new TypeError("Tarama raporu gecersiz bir bulgu iceriyor.");
+    }
+  }
 }
 
 function safeErrorMessage(error) {
@@ -283,18 +473,80 @@ function hasExited(child) {
   return child.exitCode !== null || child.signalCode !== null;
 }
 
+function terminateWindowsProcessTree(job) {
+  const windowsRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+  if (
+    process.platform !== "win32" ||
+    !Number.isInteger(job.child.pid) ||
+    typeof windowsRoot !== "string" ||
+    !path.isAbsolute(windowsRoot)
+  ) {
+    return false;
+  }
+
+  const taskkillPath = path.join(windowsRoot, "System32", "taskkill.exe");
+  if (!isRunnableFile(taskkillPath)) {
+    return false;
+  }
+
+  try {
+    const canonicalWindowsRoot = realpathSync.native(windowsRoot);
+    const canonicalTaskkill = realpathSync.native(taskkillPath);
+    if (!isStrictlyInside(canonicalWindowsRoot, canonicalTaskkill)) {
+      return false;
+    }
+    const killer = spawn(
+      canonicalTaskkill,
+      ["/PID", String(job.child.pid), "/T", "/F"],
+      {
+        env: restrictedEnvironment(),
+        shell: false,
+        stdio: "ignore",
+        windowsHide: true,
+      },
+    );
+    killer.once("error", () => {
+      if (!hasExited(job.child)) {
+        job.child.kill("SIGKILL");
+      }
+    });
+    killer.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function signalJob(job, signal) {
+  if (process.platform === "win32" && terminateWindowsProcessTree(job)) {
+    return true;
+  }
+  if (process.platform !== "win32" && Number.isInteger(job.child.pid)) {
+    try {
+      process.kill(-job.child.pid, signal);
+      return true;
+    } catch (error) {
+      if (error?.code === "ESRCH") {
+        return false;
+      }
+    }
+  }
+
+  if (!hasExited(job.child)) {
+    return job.child.kill(signal);
+  }
+  return false;
+}
+
 function requestJobTermination(job, failure) {
   if (job.finalized || job.failure) {
     return;
   }
 
   job.failure = failure;
-  if (!hasExited(job.child)) {
-    job.child.kill("SIGTERM");
+  if (signalJob(job, "SIGTERM")) {
     job.killTimer = setTimeout(() => {
-      if (!hasExited(job.child)) {
-        job.child.kill("SIGKILL");
-      }
+      signalJob(job, "SIGKILL");
     }, GRACEFUL_KILL_MS);
     job.killTimer.unref();
   }
@@ -327,6 +579,9 @@ function finishJob(job, processResult = {}) {
     return;
   }
   job.finalized = true;
+  if (job.failure && process.platform !== "win32") {
+    signalJob(job, "SIGKILL");
+  }
   clearTimeout(job.timeout);
   clearTimeout(job.killTimer);
   activeJobs.delete(job.id);
@@ -349,9 +604,12 @@ function finishJob(job, processResult = {}) {
   } else {
     try {
       report = JSON.parse(stdout.toString("utf8"));
+      validateReportValue(report);
+      validateReportSchema(report, job.scanType, job.profile);
     } catch {
       status = "error";
-      errorMessage = "Tarama motoru gecerli JSON uretmedi.";
+      report = null;
+      errorMessage = "Tarama motoru guvenli ve gecerli bir JSON raporu uretmedi.";
     }
   }
 
@@ -366,6 +624,12 @@ function finishJob(job, processResult = {}) {
       signal: typeof processResult.signal === "string" ? processResult.signal : null,
       durationMs: Date.now() - job.startedAt,
     });
+  }
+
+  if (quitRequested && activeJobs.size === 0 && !allowQuit) {
+    allowQuit = true;
+    clearTimeout(quitDeadline);
+    setImmediate(() => app.quit());
   }
 }
 
@@ -382,18 +646,50 @@ function cancelJobsOwnedBy(ownerId, message = "Tarayici penceresi kapatildi.") {
   }
 }
 
+async function requestNativeScanConfirmation(scanType, profile, target) {
+  if (nativeDialogOpen) {
+    throw new Error("Baska bir guvenlik onay penceresi zaten acik.");
+  }
+
+  const targetLabel =
+    target.value.length > 512 ? `${target.value.slice(0, 509)}...` : target.value;
+  nativeDialogOpen = true;
+  let response;
+  try {
+    response = await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      title: "Tarama yetkisini onaylayin",
+      message: "Bu hedefi tarama yetkiniz oldugunu onayliyor musunuz?",
+      detail: `Tur: ${scanType}\nProfil: ${profile}\nHedef: ${targetLabel}`,
+      buttons: ["Taramayi baslat", "Vazgec"],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+  } finally {
+    nativeDialogOpen = false;
+  }
+
+  if (response.response !== 0) {
+    throw new Error("Tarama native kullanici onayi olmadan baslatilmadi.");
+  }
+}
+
 function registerIpcHandlers() {
   ipcMain.handle(CHANNELS.pickTarget, async (event, payload) => {
     assertTrustedSender(event);
     assertOnlyKeys(payload, new Set(["scanType", "pathKind"]), "Secim istegi");
     const scanType = parseScanType(payload.scanType);
     const pathKind = parsePathKind(payload.pathKind);
-    if (targetDialogOpen) {
+    if (!LOCAL_SCAN_TYPES.has(scanType)) {
+      throw new TypeError("Web hedefleri yerel dosya secicisini kullanamaz.");
+    }
+    if (nativeDialogOpen) {
       throw new Error("Hedef secim penceresi zaten acik.");
     }
 
     let result;
-    targetDialogOpen = true;
+    nativeDialogOpen = true;
     try {
       result = await dialog.showOpenDialog(mainWindow, {
         title:
@@ -406,12 +702,13 @@ function registerIpcHandlers() {
         filters: pathKind === "file" ? fileFiltersFor(scanType) : undefined,
       });
     } finally {
-      targetDialogOpen = false;
+      nativeDialogOpen = false;
     }
 
     if (result.canceled || result.filePaths.length !== 1) {
       return { canceled: true };
     }
+    assertTrustedSender(event);
 
     return {
       canceled: false,
@@ -424,7 +721,20 @@ function registerIpcHandlers() {
     };
   });
 
-  ipcMain.handle(CHANNELS.startScan, (event, payload) => {
+  ipcMain.handle(CHANNELS.releaseTarget, (event, targetId) => {
+    assertTrustedSender(event);
+    if (typeof targetId !== "string" || targetId.length > 64) {
+      throw new TypeError("Gecersiz yerel hedef kimligi.");
+    }
+    const selected = selectedTargets.get(targetId);
+    if (!selected || selected.ownerId !== event.sender.id) {
+      return { released: false };
+    }
+    selectedTargets.delete(targetId);
+    return { released: true };
+  });
+
+  ipcMain.handle(CHANNELS.startScan, async (event, payload) => {
     assertTrustedSender(event);
     assertOnlyKeys(
       payload,
@@ -440,13 +750,22 @@ function registerIpcHandlers() {
       throw new Error("Ayni anda yalnizca bir tarama calistirilabilir.");
     }
 
+    await requestNativeScanConfirmation(scanType, profile, target);
+    assertTrustedSender(event);
+    if ([...activeJobs.values()].some((job) => job.ownerId === event.sender.id)) {
+      throw new Error("Ayni anda yalnizca bir tarama calistirilabilir.");
+    }
+
     const binary = resolveScannerBinary();
+    if (target.capabilityId) {
+      selectedTargets.delete(target.capabilityId);
+    }
     const args = [
       "scan",
       "--type",
       scanType,
       "--target",
-      target,
+      target.value,
       "--profile",
       profile,
       "--format",
@@ -456,6 +775,7 @@ function registerIpcHandlers() {
       cwd: app.getPath("temp"),
       env: restrictedEnvironment(),
       shell: false,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -465,6 +785,8 @@ function registerIpcHandlers() {
       ownerId: event.sender.id,
       sender: event.sender,
       child,
+      scanType,
+      profile,
       startedAt: Date.now(),
       finalized: false,
       failure: null,
@@ -591,13 +913,26 @@ app.whenReady().then(() => {
   });
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (allowQuit || activeJobs.size === 0) {
+    return;
+  }
+
+  event.preventDefault();
+  if (quitRequested) {
+    return;
+  }
+  quitRequested = true;
   for (const job of activeJobs.values()) {
     requestJobTermination(job, {
       kind: "cancelled",
       message: "Uygulama kapatiliyor.",
     });
   }
+  quitDeadline = setTimeout(() => {
+    allowQuit = true;
+    app.quit();
+  }, GRACEFUL_KILL_MS + 1_000);
 });
 
 app.on("window-all-closed", () => {

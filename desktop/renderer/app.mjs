@@ -1,5 +1,5 @@
 const modes = Object.freeze({
-  web: { scanType: "source", label: "Web" },
+  web: { scanType: "web", label: "Web" },
   source: { scanType: "source", label: "Kaynak kod" },
   mobile: { scanType: "mobile", label: "Mobil" },
   desktop: { scanType: "desktop", label: "Masaustu" },
@@ -10,6 +10,8 @@ const state = {
   selectedTarget: null,
   currentJobId: null,
   pendingResult: null,
+  pickGeneration: 0,
+  picking: false,
   busy: false,
 };
 
@@ -81,11 +83,16 @@ function updateStartState() {
 }
 
 function clearSelectedTarget() {
+  state.pickGeneration += 1;
+  const previousTarget = state.selectedTarget;
   state.selectedTarget = null;
   elements.selectedTarget.hidden = true;
   elements.selectedLabel.textContent = "";
   elements.selectedPath.textContent = "";
   elements.pickerError.textContent = "";
+  if (previousTarget?.id) {
+    void window.webcyber.releaseLocalTarget(previousTarget.id).catch(() => {});
+  }
   updateStartState();
 }
 
@@ -108,13 +115,13 @@ function setMode(mode) {
 function setBusy(busy) {
   state.busy = busy;
   for (const tab of elements.tabs) tab.disabled = busy;
-  elements.pickFile.disabled = busy;
-  elements.pickDirectory.disabled = busy;
+  elements.pickFile.disabled = busy || state.picking;
+  elements.pickDirectory.disabled = busy || state.picking;
   elements.urlInput.disabled = busy;
   elements.authorization.disabled = busy;
   for (const radio of elements.form.elements.profile) radio.disabled = busy;
   elements.scanStatus.hidden = !busy;
-  elements.cancelButton.disabled = !busy;
+  elements.cancelButton.disabled = !busy || !state.currentJobId;
   updateStartState();
 }
 
@@ -143,7 +150,12 @@ function showResult(result) {
   elements.resultMeta.textContent = formatDuration(result.durationMs);
 
   if (result.status === "success") {
-    elements.resultOutput.textContent = JSON.stringify(result.report, null, 2);
+    try {
+      elements.resultOutput.textContent = JSON.stringify(result.report, null, 2);
+    } catch {
+      elements.resultOutput.textContent = "Rapor guvenli bicimde goruntulenemedi.";
+      elements.resultPanel.classList.add("is-error");
+    }
   } else {
     const details = [result.error, result.stderr].filter(Boolean).join("\n\n");
     elements.resultOutput.textContent = details || "Ayrintili hata bilgisi bulunmuyor.";
@@ -160,6 +172,12 @@ function finishRendererJob(result) {
 }
 
 async function pickTarget(pathKind) {
+  const generation = state.pickGeneration + 1;
+  const modeAtOpen = state.mode;
+  state.pickGeneration = generation;
+  state.picking = true;
+  elements.pickFile.disabled = true;
+  elements.pickDirectory.disabled = true;
   elements.pickerError.textContent = "";
   try {
     const response = await window.webcyber.pickLocalTarget({
@@ -168,14 +186,31 @@ async function pickTarget(pathKind) {
     });
     if (response.canceled) return;
 
+    if (state.pickGeneration !== generation || state.mode !== modeAtOpen) {
+      await window.webcyber.releaseLocalTarget(response.target.id);
+      return;
+    }
+
+    const previousTarget = state.selectedTarget;
     state.selectedTarget = response.target;
+    if (previousTarget?.id && previousTarget.id !== response.target.id) {
+      void window.webcyber.releaseLocalTarget(previousTarget.id).catch(() => {});
+    }
     elements.selectedLabel.textContent = response.target.label;
     elements.selectedPath.textContent = response.target.displayPath;
     elements.selectedTarget.hidden = false;
     updateStartState();
   } catch (error) {
-    elements.pickerError.textContent =
-      error instanceof Error ? error.message : "Hedef secilemedi.";
+    if (state.pickGeneration === generation) {
+      elements.pickerError.textContent =
+        error instanceof Error ? error.message : "Hedef secilemedi.";
+    }
+  } finally {
+    if (state.pickGeneration === generation) {
+      state.picking = false;
+      elements.pickFile.disabled = state.busy;
+      elements.pickDirectory.disabled = state.busy;
+    }
   }
 }
 
@@ -207,6 +242,10 @@ async function startScan() {
       target,
     });
     state.currentJobId = response.jobId;
+    elements.cancelButton.disabled = false;
+    if (state.mode !== "web") {
+      clearSelectedTarget();
+    }
     if (state.pendingResult?.jobId === response.jobId) {
       finishRendererJob(state.pendingResult);
     } else {
@@ -249,7 +288,15 @@ elements.cancelButton.addEventListener("click", async () => {
   elements.cancelButton.disabled = true;
   showStatus("Tarama durduruluyor", "Tarama motorunun guvenli bicimde kapanmasi bekleniyor…");
   try {
-    await window.webcyber.cancelScan(state.currentJobId);
+    const response = await window.webcyber.cancelScan(state.currentJobId);
+    if (!response.cancelRequested && state.busy) {
+      showStatus(
+        "Tarama tamamlaniyor",
+        "Is artik etkin degil; sonucun iletilmesi bekleniyor…",
+        false,
+      );
+      elements.cancelButton.disabled = false;
+    }
   } catch (error) {
     showStatus(
       "Iptal istegi gonderilemedi",

@@ -20,6 +20,8 @@ func TestSSRFGuardRejectsUnsafeTargets(t *testing.T) {
 		"http://user:pass@example.com/",
 		"http://127.0.0.1/",
 		"http://[::1]/",
+		"http://[::127.0.0.1]/",
+		"http://[fec0::1]/",
 		"http://169.254.169.254/latest/meta-data/",
 		"http://192.0.2.2/",
 		"http://localhost/",

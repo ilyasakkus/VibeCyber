@@ -136,15 +136,7 @@ func pathWithin(root, candidate string) bool {
 }
 
 func readLimitedFile(record fileRecord, maxBytes int64) ([]byte, bool, error) {
-	// Re-check links immediately before opening to reduce symlink race exposure.
-	current, err := os.Lstat(record.Absolute)
-	if err != nil {
-		return nil, false, err
-	}
-	if current.Mode()&os.ModeSymlink != 0 || !current.Mode().IsRegular() {
-		return nil, false, fmt.Errorf("file changed or is not regular")
-	}
-	f, err := os.Open(record.Absolute)
+	f, _, err := openRegularNoFollow(record.Absolute)
 	if err != nil {
 		return nil, false, err
 	}
@@ -157,6 +149,32 @@ func readLimitedFile(record fileRecord, maxBytes int64) ([]byte, bool, error) {
 		return data[:maxBytes], true, nil
 	}
 	return data, false, nil
+}
+
+// openRegularNoFollow verifies the directory entry both before and after open.
+// Comparing the opened inode closes the common lstat/open symlink-swap window.
+func openRegularNoFollow(path string) (*os.File, fs.FileInfo, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("file is a symbolic link or is not regular")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	after, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	if !after.Mode().IsRegular() || !os.SameFile(before, after) {
+		f.Close()
+		return nil, nil, fmt.Errorf("file changed while it was being opened")
+	}
+	return f, after, nil
 }
 
 func isProbablyBinary(data []byte) bool {

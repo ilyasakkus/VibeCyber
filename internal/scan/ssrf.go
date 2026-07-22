@@ -76,8 +76,7 @@ func (g *ssrfGuard) resolveAndPin(ctx context.Context, host string) ([]net.IPAdd
 		if err := validatePublicAddresses(addresses); err != nil {
 			return nil, err
 		}
-		g.pin(host, addresses)
-		return addresses, nil
+		return g.pin(host, addresses), nil
 	}
 
 	addresses, err := g.resolver.LookupIPAddr(ctx, host)
@@ -87,16 +86,16 @@ func (g *ssrfGuard) resolveAndPin(ctx context.Context, host string) ([]net.IPAdd
 	if err := validatePublicAddresses(addresses); err != nil {
 		return nil, fmt.Errorf("host %q: %w", host, err)
 	}
-	g.pin(host, addresses)
-	return cloneIPAddrs(addresses), nil
+	return g.pin(host, addresses), nil
 }
 
-func (g *ssrfGuard) pin(host string, addresses []net.IPAddr) {
+func (g *ssrfGuard) pin(host string, addresses []net.IPAddr) []net.IPAddr {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if len(g.pinned[host]) == 0 {
 		g.pinned[host] = cloneIPAddrs(addresses)
 	}
+	return cloneIPAddrs(g.pinned[host])
 }
 
 func (g *ssrfGuard) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -121,7 +120,10 @@ func (g *ssrfGuard) dialContext(ctx context.Context, network, address string) (n
 
 func cloneIPAddrs(in []net.IPAddr) []net.IPAddr {
 	out := make([]net.IPAddr, len(in))
-	copy(out, in)
+	for index := range in {
+		out[index] = in[index]
+		out[index].IP = append(net.IP(nil), in[index].IP...)
+	}
 	return out
 }
 
@@ -169,6 +171,9 @@ var forbiddenPrefixes = mustPrefixes(
 	"fc00::/7",
 	"fe80::/10",
 	"ff00::/8",
+	"::/96",
+	"::ffff:0:0:0/96",
+	"fec0::/10",
 )
 
 func mustPrefixes(values ...string) []netip.Prefix {

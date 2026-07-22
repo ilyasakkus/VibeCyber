@@ -66,3 +66,33 @@ func TestSafeArchiveName(t *testing.T) {
 		t.Fatalf("safe normalization = %q, %v", got, ok)
 	}
 }
+
+func TestInspectZIPPreflightsEntryCount(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "many.zip")
+	f, err := os.Create(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := zip.NewWriter(f)
+	for _, name := range []string{"one.txt", "two.txt"} {
+		if _, err := w.Create(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	limits := DefaultLimits()
+	limits.MaxArchiveEntries = 1
+	report := model.Report{}
+	stats, err := inspectZIP(filename, "many.zip", limits, &report, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stats.LimitHit || len(report.Findings) != 1 || report.Findings[0].RuleID != "archive.entry-limit" {
+		t.Fatalf("unexpected preflight result: stats=%#v findings=%#v", stats, report.Findings)
+	}
+}

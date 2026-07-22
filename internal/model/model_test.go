@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeFindingsDeduplicatesAndSorts(t *testing.T) {
 	low := Finding{RuleID: "low", Module: "test", Severity: SeverityLow, Evidence: Evidence{Location: "a", Line: 1}}
@@ -23,5 +26,22 @@ func TestFingerprintDoesNotIncludeSnippet(t *testing.T) {
 	b.Evidence.Snippet = "[REDACTED:b]"
 	if Fingerprint(a) != Fingerprint(b) {
 		t.Fatal("secret snippet changed fingerprint")
+	}
+}
+
+func TestFingerprintKeepsSeparateDependenciesAtSameLocation(t *testing.T) {
+	a := Finding{RuleID: "dependency", Module: "source", Evidence: Evidence{Location: "package.json", Details: map[string]string{"dependency": "one"}}}
+	b := a
+	b.Evidence.Details = map[string]string{"dependency": "two"}
+	if Fingerprint(a) == Fingerprint(b) {
+		t.Fatal("distinct dependency findings were deduplicated")
+	}
+}
+
+func TestNormalizeBoundsUntrustedEvidence(t *testing.T) {
+	long := strings.Repeat("x", 3_000)
+	got := NormalizeFindings([]Finding{{RuleID: "test", Module: "test", Description: long, Evidence: Evidence{Location: long, Snippet: long, Details: map[string]string{"value": long}}}})
+	if len([]rune(got[0].Description)) > 2_003 || len([]rune(got[0].Evidence.Location)) > 1_027 || len([]rune(got[0].Evidence.Snippet)) > 515 {
+		t.Fatal("normalized finding exceeded evidence bounds")
 	}
 }

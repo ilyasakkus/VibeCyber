@@ -2,6 +2,7 @@ package scan
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -18,6 +19,7 @@ type mobileStats struct {
 	configFindings  int
 	archiveLimitHit bool
 	readLimitHit    bool
+	bytesRead       int64
 }
 
 func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report) error {
@@ -44,18 +46,32 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 			return err
 		}
 		lower := strings.ToLower(record.Relative)
-		if isMobileArchive(lower) && stats.archives < 20 {
+		if isMobileArchive(lower) && stats.archives >= 20 {
+			stats.archiveLimitHit = true
+			continue
+		}
+		if isMobileArchive(lower) {
 			stats.archives++
 			archive, archiveErr := inspectZIP(record.Absolute, record.Relative, e.limits, report, func(entry *zip.File, name string) error {
 				entryLower := strings.ToLower(name)
 				if !strings.HasSuffix(entryLower, "androidmanifest.xml") && !strings.HasSuffix(entryLower, "info.plist") {
 					return nil
 				}
-				data, truncated, readErr := readArchiveEntry(entry, e.limits.MaxFileBytes)
+				remaining := e.limits.MaxTotalBytes - stats.bytesRead
+				if remaining <= 0 {
+					stats.readLimitHit = true
+					return fmt.Errorf("mobile manifest byte budget exhausted")
+				}
+				limit := e.limits.MaxFileBytes
+				if remaining < limit {
+					limit = remaining
+				}
+				data, truncated, readErr := readArchiveEntry(entry, limit)
 				if readErr != nil || truncated {
 					stats.readLimitHit = true
 					return readErr
 				}
+				stats.bytesRead += int64(len(data))
 				stats.manifestFiles++
 				before := len(report.Findings)
 				inspectMobileConfiguration(record.Relative+"!/"+name, data, report, &stats)
@@ -73,11 +89,21 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 		}
 		base := strings.ToLower(filepath.Base(record.Relative))
 		if base == "androidmanifest.xml" || base == "info.plist" {
-			data, truncated, readErr := readLimitedFile(record, e.limits.MaxFileBytes)
+			remaining := e.limits.MaxTotalBytes - stats.bytesRead
+			if remaining <= 0 {
+				stats.readLimitHit = true
+				continue
+			}
+			limit := e.limits.MaxFileBytes
+			if remaining < limit {
+				limit = remaining
+			}
+			data, truncated, readErr := readLimitedFile(record, limit)
 			if readErr != nil || truncated {
 				stats.readLimitHit = true
 				continue
 			}
+			stats.bytesRead += int64(len(data))
 			stats.manifestFiles++
 			before := len(report.Findings)
 			inspectMobileConfiguration(record.Relative, data, report, &stats)
@@ -98,13 +124,13 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 	}
 	configStatus := model.ModuleComplete
 	configLimits := []string(nil)
-	if walk.LimitHit || stats.readLimitHit || stats.binaryManifests > 0 {
+	if walk.LimitHit || walk.Symlinks > 0 || walk.FilesSkipped > 0 || stats.readLimitHit || stats.binaryManifests > 0 {
 		configStatus = model.ModulePartial
 		if stats.binaryManifests > 0 {
 			configLimits = append(configLimits, "Binary Android XML was identified but not decoded by the dependency-free MVP.")
 		}
-		if walk.LimitHit || stats.readLimitHit {
-			configLimits = append(configLimits, "One or more file or read limits reduced configuration coverage.")
+		if walk.LimitHit || walk.Symlinks > 0 || walk.FilesSkipped > 0 || stats.readLimitHit {
+			configLimits = append(configLimits, "One or more symlink, file, path, or read boundaries reduced configuration coverage.")
 		}
 	}
 	report.Modules = append(report.Modules,
@@ -117,7 +143,7 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 
 func isMobileArchive(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	return ext == ".apk" || ext == ".ipa" || ext == ".aab" || ext == ".zip"
+	return ext == ".apk" || ext == ".ipa" || ext == ".aab" || ext == ".apks" || ext == ".xapk" || ext == ".zip"
 }
 
 var mobileConfigurationChecks = []struct {
@@ -139,29 +165,33 @@ var mobileConfigurationChecks = []struct {
 var exportedComponentPattern = regexp.MustCompile(`(?is)<(activity|service|receiver|provider)\b[^>]*android:exported\s*=\s*["']true["'][^>]*>`)
 
 func inspectMobileConfiguration(path string, data []byte, report *model.Report, stats *mobileStats) {
-	if isProbablyBinary(data) {
+	if isProbablyBinary(data) || bytes.HasPrefix(data, []byte("bplist")) {
 		stats.binaryManifests++
 		return
 	}
 	text := string(data)
 	for _, check := range mobileConfigurationChecks {
 		for _, location := range check.pattern.FindAllStringIndex(text, -1) {
-			report.Findings = append(report.Findings, model.Finding{
+			appendFinding(report, model.Finding{
 				RuleID: check.rule, Module: "mobile-configuration", Title: check.title, Severity: check.severity, Confidence: "high", CWE: check.cwe,
 				Description: check.description, Remediation: check.remediation,
 				Evidence: model.Evidence{Location: path, Line: lineAt(text, location[0]), Snippet: check.pattern.FindString(text[location[0]:location[1]])},
 			})
 		}
 	}
-	for _, match := range exportedComponentPattern.FindAllStringIndex(text, -1) {
+	for occurrence, match := range exportedComponentPattern.FindAllStringIndex(text, -1) {
 		tag := text[match[0]:match[1]]
 		if strings.Contains(strings.ToLower(tag), "android:permission") {
 			continue
 		}
-		report.Findings = append(report.Findings, model.Finding{
+		component := "component"
+		if groups := exportedComponentPattern.FindStringSubmatch(tag); len(groups) > 1 {
+			component = strings.ToLower(groups[1])
+		}
+		appendFinding(report, model.Finding{
 			RuleID: "mobile.android.unprotected-exported-component", Module: "mobile-configuration", Title: "Android component is exported without an inline permission", Severity: model.SeverityHigh, Confidence: "medium", CWE: "CWE-926",
 			Description: "An exported Android component does not declare a permission on the same manifest element.", Remediation: "Set exported=false when external access is unnecessary, or require a signature-level permission and validate all inputs.",
-			Evidence: model.Evidence{Location: path, Line: lineAt(text, match[0]), Snippet: truncate(exportedComponentPattern.FindString(tag), 240)},
+			Evidence: model.Evidence{Location: path, Line: lineAt(text, match[0]), Snippet: "<" + component + " ... android:exported=\"true\" ...>", Details: map[string]string{"component_type": component, "occurrence": fmt.Sprintf("%d", occurrence+1)}},
 		})
 	}
 }

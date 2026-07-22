@@ -43,3 +43,20 @@ func TestPathWithin(t *testing.T) {
 		t.Fatal("parent traversal should be rejected")
 	}
 }
+
+func TestMetadataRejectsSymlinkBeforeHashing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink setup requires privileges on some Windows systems")
+	}
+	outside := filepath.Join(t.TempDir(), "outside.bin")
+	if err := os.WriteFile(outside, []byte("sensitive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "artifact.bin")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := inspectTargetMetadata(link, 1<<20); err == nil {
+		t.Fatal("metadata inspection followed a target symlink")
+	}
+}

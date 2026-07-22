@@ -6,11 +6,12 @@
   "type": "module",
   "main": "main.mjs",
   "scripts": {
+    "prepare:scanner": "node scripts/prepare-scanner.mjs",
     "start": "electron .",
     "check": "node --check main.mjs && node --check preload.mjs && node --check renderer/app.mjs"
   },
   "devDependencies": {
-    "electron": "43.1.1"
+    "electron": "43.2.0"
   },
   "engines": {
     "node": ">=22"

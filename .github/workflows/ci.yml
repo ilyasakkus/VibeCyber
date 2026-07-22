@@ -40,4 +40,5 @@ jobs:
           node-version-file: .node-version
       - run: node --check desktop/main.mjs
       - run: node --check desktop/preload.mjs
-      - run: node --check desktop/renderer.mjs
+      - run: node --check desktop/renderer/app.mjs
+      - run: node --check desktop/scripts/prepare-scanner.mjs

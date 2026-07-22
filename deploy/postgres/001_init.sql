@@ -122,7 +122,7 @@ CREATE TABLE findings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     target_id UUID NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
-    fingerprint TEXT NOT NULL CHECK (fingerprint ~ '^[a-f0-9]{64}$'),
+    fingerprint TEXT NOT NULL CHECK (fingerprint ~ '^sha256:[a-f0-9]{64}$'),
     rule_id TEXT NOT NULL,
     title TEXT NOT NULL,
     severity TEXT NOT NULL CHECK (severity IN ('info', 'low', 'medium', 'high', 'critical')),

@@ -12,9 +12,12 @@ import (
 )
 
 func inspectTargetMetadata(target string, hashLimit int64) (map[string]string, bool, error) {
-	info, err := os.Stat(target)
+	info, err := os.Lstat(target)
 	if err != nil {
 		return nil, false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, false, fmt.Errorf("target must not be a symbolic link")
 	}
 	metadata := map[string]string{
 		"size_bytes": fmt.Sprintf("%d", info.Size()),
@@ -26,11 +29,13 @@ func inspectTargetMetadata(target string, hashLimit int64) (map[string]string, b
 	if !info.Mode().IsRegular() {
 		return nil, false, fmt.Errorf("target is not a regular file or directory")
 	}
-	f, err := os.Open(target)
+	f, openedInfo, err := openRegularNoFollow(target)
 	if err != nil {
 		return nil, false, err
 	}
 	defer f.Close()
+	info = openedInfo
+	metadata["size_bytes"] = fmt.Sprintf("%d", info.Size())
 	head := make([]byte, 512)
 	n, readErr := io.ReadFull(f, head)
 	if readErr != nil && readErr != io.ErrUnexpectedEOF {
@@ -79,7 +84,7 @@ func detectFileType(extension string, head, tail []byte) string {
 			return "Apple IPA (ZIP container)"
 		}
 		return "ZIP container"
-	case len(head) >= 8 && bytes.Equal(head[:8], []byte("dex\n035\x00")):
+	case len(head) >= 4 && bytes.Equal(head[:4], []byte("dex\n")):
 		return "Android DEX bytecode"
 	case len(head) >= 8 && bytes.Equal(head[:8], []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1}):
 		return "OLE compound document or MSI"
