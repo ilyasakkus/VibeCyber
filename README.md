@@ -15,7 +15,7 @@ Bu depo ilk çalışan dikey dilimi içerir:
 
 - Cloudflare uyumlu React web kontrol paneli
 - Güvenli varsayılanlara sahip Go CLI ve ortak bulgu modeli
-- Yerel dosya seçimi için izole Electron masaüstü kabuğu
+- Yerel dosya seçimi ve dar IPC için güvenlik ayarlı Electron masaüstü kabuğu
 - JSON ve SARIF çıktı sözleşmeleri
 - SSRF, yönlendirme, dosya/symlink, süre ve çıktı sınırları
 - Güvenlik politikası, tehdit modeli ve eklenti manifest sözleşmesi
@@ -62,7 +62,7 @@ npm run dev
 Go CLI:
 
 ```bash
-go test ./...
+go test ./cmd/... ./internal/...
 go run ./cmd/webcyber scan --type source --target . --profile observe --format json
 ```
 
@@ -89,7 +89,7 @@ npm --prefix desktop start
 | Profil | Amaç | Varsayılan sınır |
 | --- | --- | --- |
 | `observe` | TLS, başlık, metadata ve yerel statik analiz | Veri değiştirmez |
-| `safe` | Sınırlandırılmış crawl ve incelenmiş kurallar | Aynı origin, oran/süre kotası |
+| `safe` | MVP'de aynı salt-okunur web gözlemi; daha geniş yerel statik kurallar için sözleşme | Veri değiştirmez; crawl henüz yok |
 | `active` | Yetkili staging ortamında ileri testler | Bu ilk dilimde kapalı |
 
 Halka açık bir WebCyber kurulumu, aktif tarama başlatmadan önce hedef sahipliği,

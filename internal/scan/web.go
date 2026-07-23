@@ -339,12 +339,28 @@ func safeURL(input *url.URL) string {
 func sanitizeNetworkError(err error) error {
 	var urlError *url.Error
 	if !errors.As(err, &urlError) {
-		return err
+		if errors.Is(err, context.DeadlineExceeded) {
+			return errors.New("network request timed out")
+		}
+		if errors.Is(err, context.Canceled) {
+			return errors.New("network request was canceled")
+		}
+		return errors.New("network request failed")
 	}
 	parsed, parseErr := url.Parse(urlError.URL)
 	display := "[invalid URL]"
 	if parseErr == nil {
 		display = safeURL(parsed)
 	}
-	return errors.New(truncate(fmt.Sprintf("%s %q: %v", urlError.Op, display, urlError.Err), 1_024))
+	reason := "network request failed"
+	if urlError.Timeout() || errors.Is(urlError.Err, context.DeadlineExceeded) {
+		reason = "network request timed out"
+	} else if errors.Is(urlError.Err, context.Canceled) {
+		reason = "network request was canceled"
+	}
+	operation := strings.ToLower(strings.TrimSpace(urlError.Op))
+	if operation != "get" && operation != "head" {
+		operation = "request"
+	}
+	return errors.New(truncate(fmt.Sprintf("%s %q: %s", operation, display, reason), 1_024))
 }

@@ -18,8 +18,9 @@ const description =
   "Web, kaynak kod, mobil ve masaüstü uygulamaları için katmanlı açık kaynak güvenlik tarama platformu.";
 
 function requestOrigin(requestHeaders: Headers) {
+  const directHost = requestHeaders.get("host")?.trim();
   const forwardedHost = requestHeaders.get("x-forwarded-host")?.split(",")[0];
-  const host = (forwardedHost ?? requestHeaders.get("host") ?? "").trim();
+  const host = (directHost || forwardedHost || "").trim();
   const validHost = /^(?:localhost|[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::\d{1,5})?$/i.test(
     host,
   );

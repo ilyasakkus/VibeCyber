@@ -1,7 +1,11 @@
 package scan
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -90,6 +94,49 @@ func TestSafeURLDropsCredentialsQueryAndFragment(t *testing.T) {
 	if got != "https://example.com/path" {
 		t.Fatalf("safe URL = %q", got)
 	}
+}
+
+func TestSanitizeNetworkErrorNeverIncludesNestedRedirectOrQuerySecrets(t *testing.T) {
+	outerSecret := "OUTER_QUERY_SECRET"
+	nestedSecret := "NESTED_LOCATION_SECRET"
+	raw := &url.Error{
+		Op:  "Get",
+		URL: "https://example.com/start?token=" + outerSecret,
+		Err: fmt.Errorf("failed to parse Location header %q", "https://other.example/?key="+nestedSecret),
+	}
+	safe := sanitizeNetworkError(raw).Error()
+	if strings.Contains(safe, outerSecret) || strings.Contains(safe, nestedSecret) || strings.Contains(safe, "Location") {
+		t.Fatalf("sanitized error leaked nested data: %q", safe)
+	}
+	if !strings.Contains(safe, "https://example.com/start") || !strings.Contains(safe, "network request failed") {
+		t.Fatalf("sanitized error lost safe context: %q", safe)
+	}
+
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusFound,
+			Header:     http.Header{"Location": []string{"http://[::1?secret=" + nestedSecret}},
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    request,
+		}, nil
+	})}
+	_, err := client.Get("https://example.com/?secret=" + outerSecret)
+	if err == nil {
+		t.Fatal("malformed redirect unexpectedly succeeded")
+	}
+	safe = sanitizeNetworkError(err).Error()
+	if strings.Contains(safe, outerSecret) || strings.Contains(safe, nestedSecret) {
+		t.Fatalf("actual redirect parse error leaked a secret: %q", safe)
+	}
+	if errors.Is(sanitizeNetworkError(context.DeadlineExceeded), context.DeadlineExceeded) {
+		t.Fatal("sanitized error retained a raw error chain")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func mustURL(t *testing.T, raw string) *url.URL {

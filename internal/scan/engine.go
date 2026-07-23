@@ -142,8 +142,8 @@ func finish(report model.Report, started time.Time, status string) model.Report 
 }
 
 func appendFinding(report *model.Report, finding model.Finding) {
-	if len(report.Findings) < maxReportFindings {
-		report.Findings = append(report.Findings, finding)
+	result := report.AddFinding(finding, maxReportFindings)
+	if result != model.FindingCapped {
 		return
 	}
 	const limitation = "Finding output stopped at the safety limit of 2000 records; narrow the target or split the scan for full coverage."
@@ -153,4 +153,11 @@ func appendFinding(report *model.Report, finding model.Finding) {
 		}
 	}
 	report.Limitations = append(report.Limitations, limitation)
+	report.Modules = append(report.Modules, model.ModuleResult{
+		Name:        "finding-output",
+		Status:      model.ModulePartial,
+		Summary:     "Unique findings exceeded the bounded report capacity.",
+		ItemsSeen:   maxReportFindings,
+		Limitations: []string{limitation},
+	})
 }

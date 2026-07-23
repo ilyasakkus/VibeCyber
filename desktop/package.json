@@ -8,7 +8,8 @@
   "scripts": {
     "prepare:scanner": "node scripts/prepare-scanner.mjs",
     "start": "electron .",
-    "check": "node --check main.mjs && node --check preload.mjs && node --check renderer/app.mjs"
+    "smoke:failed-report": "node scripts/smoke-failed-report.mjs",
+    "check": "node --check main.mjs && node --check preload.mjs && node --check report-validation.mjs && node --check renderer/app.mjs && node --check scripts/prepare-scanner.mjs && node --check scripts/smoke-failed-report.mjs && node scripts/smoke-failed-report.mjs"
   },
   "devDependencies": {
     "electron": "43.2.0"

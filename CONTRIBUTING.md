@@ -16,7 +16,7 @@ Katkı göndermeden önce bir issue ile amaç ve güvenlik etkisini paylaşın.
 ## Kontroller
 
 ```bash
-go test ./...
+go test ./cmd/... ./internal/...
 npm run lint
 npm test
 node --check desktop/main.mjs

@@ -11,6 +11,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, session } from "electron";
+import {
+  DESKTOP_SCAN_TIMEOUT_MS,
+  interpretScannerCompletion,
+} from "./report-validation.mjs";
 
 const APP_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const RENDERER_FILE = path.join(APP_DIRECTORY, "renderer", "index.html");
@@ -20,8 +24,6 @@ const SESSION_PARTITION = "webcyber-desktop";
 const SCAN_TYPES = new Set(["web", "source", "mobile", "desktop"]);
 const LOCAL_SCAN_TYPES = new Set(["source", "mobile", "desktop"]);
 const SCAN_PROFILES = new Set(["observe", "safe"]);
-const SEVERITIES = new Set(["critical", "high", "medium", "low", "info"]);
-const MODULE_STATUSES = new Set(["complete", "partial", "skipped", "error"]);
 const PATH_KINDS = new Set(["file", "directory"]);
 const MAX_SELECTED_TARGETS = 32;
 const TARGET_TTL_MS = 10 * 60 * 1_000;
@@ -29,11 +31,8 @@ const MAX_URL_LENGTH = 2_048;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 1024 * 1024;
 const MAX_ERROR_TEXT_BYTES = 64 * 1024;
-const MAX_REPORT_DEPTH = 64;
-const MAX_REPORT_NODES = 100_000;
-const MAX_REPORT_STRING_BYTES = 1024 * 1024;
 const MAX_SCANNER_BINARY_BYTES = 256 * 1024 * 1024;
-const SCAN_TIMEOUT_MS = 15 * 60 * 1_000;
+const SCAN_TIMEOUT_MS = DESKTOP_SCAN_TIMEOUT_MS;
 const GRACEFUL_KILL_MS = 2_000;
 
 const CHANNELS = Object.freeze({
@@ -371,99 +370,6 @@ function resolveScanTarget(payload, ownerId, scanType) {
   throw new TypeError("Gecersiz hedef turu.");
 }
 
-function validateReportValue(report) {
-  if (!isRecord(report)) {
-    throw new TypeError("Tarama raporunun kok degeri bir nesne olmalidir.");
-  }
-
-  const pending = [{ value: report, depth: 0 }];
-  let visitedNodes = 0;
-  while (pending.length > 0) {
-    const { value, depth } = pending.pop();
-    visitedNodes += 1;
-    if (visitedNodes > MAX_REPORT_NODES || depth > MAX_REPORT_DEPTH) {
-      throw new TypeError("Tarama raporu yapi sinirini asti.");
-    }
-
-    if (typeof value === "string") {
-      if (Buffer.byteLength(value, "utf8") > MAX_REPORT_STRING_BYTES) {
-        throw new TypeError("Tarama raporundaki bir metin siniri asti.");
-      }
-      continue;
-    }
-    if (value === null || typeof value === "boolean" || typeof value === "number") {
-      continue;
-    }
-    if (!Array.isArray(value) && !isRecord(value)) {
-      throw new TypeError("Tarama raporu desteklenmeyen bir deger iceriyor.");
-    }
-
-    const entries = Array.isArray(value) ? value.entries() : Object.entries(value);
-    for (const [key, child] of entries) {
-      if (typeof key === "string" && key.length > 512) {
-        throw new TypeError("Tarama raporundaki bir alan adi siniri asti.");
-      }
-      pending.push({ value: child, depth: depth + 1 });
-    }
-  }
-}
-
-function validateReportSchema(report, expectedScanType, expectedProfile) {
-  const summaryKeys = ["total", "critical", "high", "medium", "low", "info"];
-  if (
-    report.schema_version !== "1.0" ||
-    !isRecord(report.tool) ||
-    report.tool.name !== "WebCyber" ||
-    typeof report.tool.version !== "string" ||
-    !isRecord(report.scan) ||
-    report.scan.type !== expectedScanType ||
-    report.scan.profile !== expectedProfile ||
-    typeof report.scan.id !== "string" ||
-    typeof report.scan.status !== "string" ||
-    !isRecord(report.summary) ||
-    !Array.isArray(report.modules) ||
-    report.modules.length > 1_000 ||
-    !Array.isArray(report.findings) ||
-    report.findings.length > 25_000
-  ) {
-    throw new TypeError("Tarama raporu beklenen WebCyber 1.0 semasiyla uyusmuyor.");
-  }
-
-  for (const key of summaryKeys) {
-    if (!Number.isSafeInteger(report.summary[key]) || report.summary[key] < 0) {
-      throw new TypeError("Tarama raporu gecersiz bir ozet iceriyor.");
-    }
-  }
-  for (const moduleResult of report.modules) {
-    if (
-      !isRecord(moduleResult) ||
-      typeof moduleResult.name !== "string" ||
-      !MODULE_STATUSES.has(moduleResult.status) ||
-      typeof moduleResult.summary !== "string"
-    ) {
-      throw new TypeError("Tarama raporu gecersiz bir modul sonucu iceriyor.");
-    }
-  }
-  for (const finding of report.findings) {
-    if (
-      !isRecord(finding) ||
-      typeof finding.rule_id !== "string" ||
-      typeof finding.fingerprint !== "string" ||
-      typeof finding.module !== "string" ||
-      typeof finding.title !== "string" ||
-      typeof finding.description !== "string" ||
-      !SEVERITIES.has(finding.severity)
-    ) {
-      throw new TypeError("Tarama raporu gecersiz bir bulgu iceriyor.");
-    }
-  }
-}
-
-function safeErrorMessage(error) {
-  const message = error instanceof Error ? error.message : "Bilinmeyen tarama hatasi.";
-  return message.slice(0, 2_000);
-}
-
 function limitedText(buffer) {
   const limited = buffer.subarray(0, MAX_ERROR_TEXT_BYTES).toString("utf8");
   return buffer.length > MAX_ERROR_TEXT_BYTES ? `${limited}\n… (devami kisaltildi)` : limited;
@@ -588,37 +494,23 @@ function finishJob(job, processResult = {}) {
 
   const stdout = Buffer.concat(job.stdoutChunks);
   const stderr = Buffer.concat(job.stderrChunks);
-  let status = "success";
-  let report = null;
-  let errorMessage = null;
-
-  if (job.failure) {
-    status = job.failure.kind === "cancelled" ? "cancelled" : "error";
-    errorMessage = job.failure.message;
-  } else if (processResult.error) {
-    status = "error";
-    errorMessage = safeErrorMessage(processResult.error);
-  } else if (processResult.code !== 0) {
-    status = "error";
-    errorMessage = `Tarama motoru ${String(processResult.code)} cikis koduyla sonlandi.`;
-  } else {
-    try {
-      report = JSON.parse(stdout.toString("utf8"));
-      validateReportValue(report);
-      validateReportSchema(report, job.scanType, job.profile);
-    } catch {
-      status = "error";
-      report = null;
-      errorMessage = "Tarama motoru guvenli ve gecerli bir JSON raporu uretmedi.";
-    }
-  }
+  const completion = interpretScannerCompletion({
+    stdout,
+    expected: {
+      scanType: job.scanType,
+      profile: job.profile,
+      target: job.target,
+    },
+    processResult,
+    failure: job.failure,
+  });
 
   if (!job.sender.isDestroyed()) {
     job.sender.send(CHANNELS.scanFinished, {
       jobId: job.id,
-      status,
-      report,
-      error: errorMessage,
+      status: completion.status,
+      report: completion.report,
+      error: completion.error,
       stderr: limitedText(stderr),
       exitCode: Number.isInteger(processResult.code) ? processResult.code : null,
       signal: typeof processResult.signal === "string" ? processResult.signal : null,
@@ -787,6 +679,7 @@ function registerIpcHandlers() {
       child,
       scanType,
       profile,
+      target: target.value,
       startedAt: Date.now(),
       finalized: false,
       failure: null,
@@ -807,7 +700,7 @@ function registerIpcHandlers() {
     job.timeout = setTimeout(() => {
       requestJobTermination(job, {
         kind: "timeout",
-        message: "Tarama 15 dakikalik sure sinirini asti.",
+        message: "Tarama 2 dakika 15 saniyelik masaustu sure sinirini asti.",
       });
     }, SCAN_TIMEOUT_MS);
     job.timeout.unref();

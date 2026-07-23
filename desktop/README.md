@@ -34,16 +34,25 @@ webcyber scan --type web|source|mobile|desktop --target <hedef> --profile observ
 - Yalniz gelistirme modunda `WEB_CYBER_SCANNER_BIN` kullanilabilir; deger mutlak,
   mevcut ve calistirilabilir bir dosya degilse istek reddedilir.
 - Surec `shell: false` ile ve sinirli bir ortam degiskeni listesiyle baslatilir.
-- Ayni pencerede tek is, 15 dakika ve toplam 8 MiB cikti / 1 MiB stderr siniri
-  vardir. POSIX sistemlerde ayri bir process group sonlandirilir; Windows'ta sabit
+- Ayni pencerede tek is ve toplam 8 MiB cikti / 1 MiB stderr siniri vardir. Go
+  motorunun tarama butcesi 2 dakikadir; masaustu kabugu kontrollu kapanma icin 15
+  saniye pay birakarak sureci en gec 135 saniyede sonlandirir. POSIX sistemlerde
+  ayri bir process group sonlandirilir; Windows'ta sabit
   sistem `taskkill.exe /T /F` yolu ile process tree kapatilir. Uygulama cikisi bu
   temizligi kisa bir son tarihe kadar bekler.
-- Basarili CLI ciktisi tek bir gecerli JSON degeri olmalidir.
+- CLI stdout'u tek bir gecerli JSON degeri olmalidir. Motor non-zero cikis koduyla
+  sonlansa bile semasi dogrulanan `failed` veya `partial` rapor renderer'a iletilir;
+  hata metni, modul sonuclari ve sinirlamalar birlikte gosterilir.
 
 Web URL'leri CLI'ya `--type web` olarak gider. Renderer URL'yi normalize eder;
 ana surec protokol, kimlik bilgisi ve uzunluk kontrollerini yeniden uygular.
 Mevcut motor public-web-only politikasiyla loopback, private, link-local ve
 reserved hedefleri; guvensiz DNS cevaplarini ve yonlendirmeleri reddeder.
+Web MVP'si hedefe tek bir salt-okunur GET istegi yapar. Crawl, form gonderimi,
+fuzzing veya proof-of-concept payload calistirmaz; `observe` ve `safe` profilleri
+bu surumde ayni pasif web davranisini kullanir. Yerel kaynak, mobil ve masaustu
+hedeflerinde dosyalar sinirli ve statik olarak okunur; hedef uygulama kodu
+calistirilmaz.
 
 ## Guvenlik modeli
 
@@ -68,6 +77,9 @@ reserved hedefleri; guvensiz DNS cevaplarini ve yonlendirmeleri reddeder.
   override'i bu paket manifestinden bilincli olarak muaftir.
 - JSON raporu IPC'ye verilmeden once toplam byte sinirina ek olarak kok nesne,
   derinlik, dugum sayisi, alan adi ve tekil metin boyutu sinirlarindan gecirilir.
+  Ayrica tarama durumu, hedef/profil eslesmesi, web URL redaksiyonu, tarih ve sure,
+  `sha256:` fingerprint bicimi, ozet-bulgu sayim tutarliligi ve 2.000 bulgu tavani
+  dogrulanir.
 
 **OS seviyesinde kaynak sandbox'i bu scaffold tarafindan garanti edilmez.** CLI
 Electron renderer sandbox'inda degil, uygulamayi calistiran kullanicinin dosya

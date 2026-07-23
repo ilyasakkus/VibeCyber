@@ -13,17 +13,24 @@ import (
 )
 
 type mobileStats struct {
-	archives        int
-	manifestFiles   int
-	binaryManifests int
-	configFindings  int
-	archiveLimitHit bool
-	readLimitHit    bool
-	bytesRead       int64
+	archives         int
+	manifestFiles    int
+	binaryManifests  int
+	configFindings   int
+	archiveLimitHit  bool
+	archiveParseErrs int
+	readLimitHit     bool
+	bytesRead        int64
 }
 
 func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report) error {
-	metadata, hashLimited, err := inspectTargetMetadata(report.Scan.Target, e.limits.MaxArchiveTotalBytes)
+	tree, err := collectFiles(report.Scan.Target, e.limits)
+	if err != nil {
+		report.Modules = append(report.Modules, model.ModuleResult{Name: "artifact-metadata", Status: model.ModuleError, Summary: "The mobile target could not be opened inside a bounded filesystem root.", Errors: []string{err.Error()}})
+		return err
+	}
+	defer tree.Close()
+	metadata, hashLimited, err := inspectTargetMetadata(tree, e.limits.MaxArchiveTotalBytes)
 	if err != nil {
 		report.Modules = append(report.Modules, model.ModuleResult{Name: "artifact-metadata", Status: model.ModuleError, Summary: "The mobile target metadata could not be read.", Errors: []string{err.Error()}})
 		return err
@@ -32,14 +39,11 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 	metadataLimits := []string(nil)
 	if hashLimited {
 		metadataStatus = model.ModulePartial
-		metadataLimits = []string{"SHA-256 was not computed because the artifact exceeds the hashing size limit."}
+		metadataLimits = []string{"SHA-256 was not published because the bounded stable-read requirement was not met."}
 	}
 	report.Modules = append(report.Modules, model.ModuleResult{Name: "artifact-metadata", Status: metadataStatus, Summary: "Collected static artifact type, size, and bounded hash metadata.", ItemsSeen: 1, Metadata: metadata, Limitations: metadataLimits})
 
-	_, files, walk, err := collectFiles(report.Scan.Target, e.limits)
-	if err != nil {
-		return err
-	}
+	files, walk := tree.Files, tree.Stats
 	stats := mobileStats{}
 	for _, record := range files {
 		if err := ctx.Err(); err != nil {
@@ -52,7 +56,7 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 		}
 		if isMobileArchive(lower) {
 			stats.archives++
-			archive, archiveErr := inspectZIP(record.Absolute, record.Relative, e.limits, report, func(entry *zip.File, name string) error {
+			archive, archiveErr := inspectZIP(record, record.Relative, e.limits, report, func(entry *zip.File, name string) error {
 				entryLower := strings.ToLower(name)
 				if !strings.HasSuffix(entryLower, "androidmanifest.xml") && !strings.HasSuffix(entryLower, "info.plist") {
 					return nil
@@ -79,6 +83,8 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 				return nil
 			})
 			if archiveErr != nil {
+				stats.archiveParseErrs++
+				stats.archiveLimitHit = true
 				stats.readLimitHit = true
 				continue
 			}
@@ -114,12 +120,16 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 	archiveStatus := model.ModuleSkipped
 	archiveSummary := "No APK, IPA, AAB, or ZIP container was present in the bounded target inventory."
 	archiveLimitations := []string(nil)
+	archiveErrors := []string(nil)
 	if stats.archives > 0 {
 		archiveStatus = model.ModuleComplete
 		archiveSummary = fmt.Sprintf("Inspected %d mobile ZIP containers without extracting files.", stats.archives)
 		if stats.archiveLimitHit {
 			archiveStatus = model.ModulePartial
 			archiveLimitations = []string{"At least one archive exceeded entry, expansion, or compression-ratio limits."}
+		}
+		if stats.archiveParseErrs > 0 {
+			archiveErrors = []string{"One or more mobile ZIP containers were malformed or use an unsupported structure."}
 		}
 	}
 	configStatus := model.ModuleComplete
@@ -134,7 +144,7 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 		}
 	}
 	report.Modules = append(report.Modules,
-		model.ModuleResult{Name: "archive-security", Status: archiveStatus, Summary: archiveSummary, ItemsSeen: stats.archives, Limitations: archiveLimitations},
+		model.ModuleResult{Name: "archive-security", Status: archiveStatus, Summary: archiveSummary, ItemsSeen: stats.archives, Limitations: archiveLimitations, Errors: archiveErrors},
 		model.ModuleResult{Name: "mobile-configuration", Status: configStatus, Summary: fmt.Sprintf("Inspected %d mobile manifest/property files and produced %d findings.", stats.manifestFiles, stats.configFindings), ItemsSeen: stats.manifestFiles, Limitations: configLimits},
 		model.ModuleResult{Name: "mobile-reverse-engineering", Status: model.ModulePartial, Summary: "Recorded the artifact for a future isolated APK/IPA reverse-engineering worker.", Limitations: []string{"The built-in MVP does not invoke jadx, baksmali, codesign, or MobSF and does not execute the app."}},
 	)

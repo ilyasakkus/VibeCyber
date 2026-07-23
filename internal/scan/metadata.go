@@ -6,19 +6,17 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-func inspectTargetMetadata(target string, hashLimit int64) (map[string]string, bool, error) {
-	info, err := os.Lstat(target)
-	if err != nil {
-		return nil, false, err
+func inspectTargetMetadata(tree *targetTree, hashLimit int64) (map[string]string, bool, error) {
+	if tree == nil || tree.TargetInfo == nil {
+		return nil, false, fmt.Errorf("bounded target metadata is unavailable")
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, false, fmt.Errorf("target must not be a symbolic link")
-	}
+	info := tree.TargetInfo
 	metadata := map[string]string{
 		"size_bytes": fmt.Sprintf("%d", info.Size()),
 	}
@@ -26,10 +24,11 @@ func inspectTargetMetadata(target string, hashLimit int64) (map[string]string, b
 		metadata["file_type"] = "directory"
 		return metadata, false, nil
 	}
-	if !info.Mode().IsRegular() {
+	if !info.Mode().IsRegular() || len(tree.Files) != 1 {
 		return nil, false, fmt.Errorf("target is not a regular file or directory")
 	}
-	f, openedInfo, err := openRegularNoFollow(target)
+	record := tree.Files[0]
+	f, openedInfo, err := openRecord(record)
 	if err != nil {
 		return nil, false, err
 	}
@@ -51,20 +50,58 @@ func inspectTargetMetadata(target string, hashLimit int64) (map[string]string, b
 		n, _ = f.ReadAt(tail, offset)
 		tail = tail[:n]
 	}
-	metadata["file_type"] = detectFileType(filepath.Ext(target), head, tail)
+	metadata["file_type"] = detectFileType(filepath.Ext(record.Relative), head, tail)
 	if info.Size() > hashLimit {
-		metadata["sha256"] = "not-computed-size-limit"
+		metadata["sha256_status"] = "not-computed-size-limit"
 		return metadata, true, nil
 	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
+	digest, bytesHashed, stable, err := hashStableFile(f, info, hashLimit)
+	if err != nil {
 		return nil, false, err
+	}
+	metadata["bytes_hashed"] = fmt.Sprintf("%d", bytesHashed)
+	if !stable {
+		metadata["sha256_status"] = "not-computed-file-changed"
+		return metadata, true, nil
+	}
+	metadata["sha256"] = digest
+	metadata["sha256_status"] = "complete"
+	metadata["hash_scope"] = "full-file-stable-read"
+	return metadata, false, nil
+}
+
+func hashStableFile(f interface {
+	io.Reader
+	io.Seeker
+	Stat() (fs.FileInfo, error)
+}, initial fs.FileInfo, hashLimit int64) (digest string, bytesHashed int64, stable bool, err error) {
+	if initial.Size() > hashLimit {
+		return "", 0, false, nil
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", 0, false, err
 	}
 	hash := sha256.New()
-	if _, err := io.Copy(hash, io.LimitReader(f, hashLimit+1)); err != nil {
-		return nil, false, err
+	bytesHashed, err = io.CopyN(hash, f, initial.Size())
+	if err != nil {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return "", bytesHashed, false, nil
+		}
+		return "", bytesHashed, false, err
 	}
-	metadata["sha256"] = hex.EncodeToString(hash.Sum(nil))
-	return metadata, false, nil
+	var extra [1]byte
+	extraBytes, readErr := f.Read(extra[:])
+	if readErr != nil && readErr != io.EOF {
+		return "", bytesHashed, false, readErr
+	}
+	after, statErr := f.Stat()
+	if statErr != nil {
+		return "", bytesHashed, false, statErr
+	}
+	if extraBytes != 0 || after.Size() != initial.Size() || !after.ModTime().Equal(initial.ModTime()) || !os.SameFile(initial, after) {
+		return "", bytesHashed, false, nil
+	}
+	return hex.EncodeToString(hash.Sum(nil)), bytesHashed, true, nil
 }
 
 func detectFileType(extension string, head, tail []byte) string {

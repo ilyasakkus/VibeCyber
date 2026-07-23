@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type TargetType = "web" | "source" | "mobile" | "desktop";
 type Profile = "observe" | "safe";
@@ -15,6 +15,8 @@ type ScanJob = {
   phase: string;
   progress: number;
   status: ScanStatus;
+  pausedFrom?: Exclude<ScanStatus, "PAUSED">;
+  pausedByKill?: boolean;
   started: string;
 };
 
@@ -48,7 +50,7 @@ const targetConfig: Record<
   web: {
     label: "Hedef adresi",
     placeholder: "https://uygulama.ornek.com",
-    hint: "Yalnız bu ana makine ve izin verilen alt yollar taranır.",
+    hint: "Gerçek istemcide kapsam yalnız bu ana makine ve izin verilen alt yollarla sınırlanır.",
   },
   source: {
     label: "Depo veya proje yolu",
@@ -58,7 +60,7 @@ const targetConfig: Record<
   mobile: {
     label: "Mobil paket yolu",
     placeholder: "/builds/app-release.apk veya uygulama.ipa",
-    hint: "APK ve IPA paketleri izole bir analiz alanında açılır.",
+    hint: "Gerçek istemcide APK ve IPA paketleri yerel, izole analiz alanında açılır.",
   },
   desktop: {
     label: "Uygulama veya binary yolu",
@@ -73,7 +75,7 @@ const initialScans: ScanJob[] = [
     name: "Staging API",
     target: "api.staging.acme.test",
     kind: "web",
-    phase: "Uç nokta haritalama",
+    phase: "Tek salt-okunur yanıt gözlemi",
     progress: 68,
     status: "RUNNING",
     started: "12 dk",
@@ -83,7 +85,7 @@ const initialScans: ScanJob[] = [
     name: "Android 4.8.0",
     target: "acme-release.apk",
     kind: "mobile",
-    phase: "Manifest ve secret analizi",
+    phase: "Statik manifest analizi",
     progress: 41,
     status: "RUNNING",
     started: "19 dk",
@@ -93,7 +95,7 @@ const initialScans: ScanJob[] = [
     name: "Checkout Service",
     target: "services/checkout",
     kind: "source",
-    phase: "SCA erişilebilirlik kontrolü",
+    phase: "Statik bağımlılık envanteri",
     progress: 87,
     status: "RUNNING",
     started: "26 dk",
@@ -164,11 +166,11 @@ const findings: Finding[] = [
 ];
 
 const navItems = [
-  { label: "Genel bakış", icon: "▦", badge: "" },
-  { label: "Taramalar", icon: "◎", badge: "3" },
-  { label: "Bulgular", icon: "◇", badge: "12" },
-  { label: "Varlıklar", icon: "⌘", badge: "" },
-  { label: "Politikalar", icon: "⊡", badge: "" },
+  { label: "Genel bakış", icon: "▦", badge: "", href: "#overview" },
+  { label: "Taramalar", icon: "◎", badge: "3", href: "#scans" },
+  { label: "Bulgular", icon: "◇", badge: "12", href: "#findings" },
+  { label: "Varlıklar", icon: "⌘", badge: "", href: null },
+  { label: "Politikalar", icon: "⊡", badge: "", href: null },
 ];
 
 const secondaryNavItems = [
@@ -190,11 +192,64 @@ function targetKindLabel(kind: TargetType) {
   return targetOptions.find((item) => item.id === kind)?.label ?? "Hedef";
 }
 
+function validateTarget(type: TargetType, value: string) {
+  const cleanTarget = value.trim();
+
+  if (!cleanTarget) {
+    return { valid: false, error: "Taranacak hedefi girin." };
+  }
+
+  if (type !== "web") {
+    return { valid: true, error: "" };
+  }
+
+  try {
+    const parsedTarget = new URL(cleanTarget);
+    const hasAllowedProtocol =
+      parsedTarget.protocol === "http:" || parsedTarget.protocol === "https:";
+
+    if (!hasAllowedProtocol) {
+      return { valid: false, error: "Web hedefi http:// veya https:// ile başlamalı." };
+    }
+
+    if (!parsedTarget.hostname) {
+      return { valid: false, error: "Web hedefinde geçerli bir ana makine adı olmalı." };
+    }
+
+    if (parsedTarget.username || parsedTarget.password) {
+      return {
+        valid: false,
+        error: "URL içinde kullanıcı adı veya parola bilgisi kullanılamaz.",
+      };
+    }
+
+    return { valid: true, error: "" };
+  } catch {
+    return {
+      valid: false,
+      error: "Geçerli bir web adresi girin (örn. https://uygulama.example).",
+    };
+  }
+}
+
+function demoPhase(type: TargetType, profile: Profile) {
+  if (type === "web") {
+    return profile === "observe"
+      ? "Pasif URL bilgisi önizlemesi"
+      : "Tek salt-okunur yanıt gözlemi";
+  }
+
+  return profile === "observe"
+    ? "Paket bilgisi önizlemesi"
+    : "Statik metadata analizi";
+}
+
 export default function Home() {
   const [targetType, setTargetType] = useState<TargetType>("web");
-  const [target, setTarget] = useState("https://staging.example.com");
+  const [target, setTarget] = useState("");
+  const [targetTouched, setTargetTouched] = useState(false);
   const [profile, setProfile] = useState<Profile>("safe");
-  const [scopeConfirmed, setScopeConfirmed] = useState(true);
+  const [scopeConfirmed, setScopeConfirmed] = useState(false);
   const [agentConnected, setAgentConnected] = useState(false);
   const [activeNotice, setActiveNotice] = useState(false);
   const [notice, setNotice] = useState("");
@@ -205,8 +260,25 @@ export default function Home() {
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [allPaused, setAllPaused] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const navCloseButtonRef = useRef<HTMLButtonElement>(null);
 
   const isLocalTarget = targetType !== "web";
+  const targetValidation = useMemo(
+    () => validateTarget(targetType, target),
+    [target, targetType],
+  );
+  const showTargetError = targetTouched && !targetValidation.valid;
+  const queuedScanIds = scans
+    .filter((scan) => scan.status === "QUEUED")
+    .map((scan) => scan.id)
+    .join("|");
+  const scanCanStart =
+    targetValidation.valid &&
+    scopeConfirmed &&
+    !allPaused &&
+    (!isLocalTarget || agentConnected);
 
   useEffect(() => {
     const progressTimer = window.setInterval(() => {
@@ -228,6 +300,53 @@ export default function Home() {
     return () => window.clearTimeout(noticeTimer);
   }, [notice]);
 
+  useEffect(() => {
+    const mobileQuery = window.matchMedia("(max-width: 780px)");
+    const updateViewport = () => {
+      setIsMobileViewport(mobileQuery.matches);
+      if (!mobileQuery.matches) setMobileNavOpen(false);
+    };
+
+    updateViewport();
+    mobileQuery.addEventListener("change", updateViewport);
+    return () => mobileQuery.removeEventListener("change", updateViewport);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileViewport || !mobileNavOpen) return;
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      navCloseButtonRef.current?.focus();
+    });
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMobileNavOpen(false);
+      window.requestAnimationFrame(() => mobileMenuButtonRef.current?.focus());
+    };
+
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isMobileViewport, mobileNavOpen]);
+
+  useEffect(() => {
+    if (allPaused || !queuedScanIds) return;
+
+    const queueTimer = window.setTimeout(() => {
+      setScans((current) =>
+        current.map((scan) =>
+          scan.status === "QUEUED"
+            ? { ...scan, status: "RUNNING", progress: Math.max(scan.progress, 9) }
+            : scan,
+        ),
+      );
+    }, 1200);
+
+    return () => window.clearTimeout(queueTimer);
+  }, [allPaused, queuedScanIds]);
+
   const visibleFindings = useMemo(
     () =>
       findings.filter((finding) => {
@@ -243,15 +362,30 @@ export default function Home() {
   function changeTargetType(nextType: TargetType) {
     setTargetType(nextType);
     setTarget("");
+    setTargetTouched(false);
+    setScopeConfirmed(false);
     setActiveNotice(false);
+  }
+
+  function closeMobileNav(restoreFocus = true) {
+    setMobileNavOpen(false);
+    if (restoreFocus && isMobileViewport) {
+      window.requestAnimationFrame(() => mobileMenuButtonRef.current?.focus());
+    }
   }
 
   function submitScan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const cleanTarget = target.trim();
 
-    if (!cleanTarget) {
-      setNotice("Önce taranacak hedefi girin.");
+    if (allPaused) {
+      setNotice("Demo kill switch açıkken yeni iş oluşturulamaz.");
+      return;
+    }
+
+    if (!targetValidation.valid) {
+      setTargetTouched(true);
+      setNotice(targetValidation.error);
       return;
     }
 
@@ -271,57 +405,50 @@ export default function Home() {
       name: targetKindLabel(targetType),
       target: shortTarget(cleanTarget),
       kind: targetType,
-      phase: profile === "observe" ? "Pasif envanter keşfi" : "Güvenli kontroller hazırlanıyor",
+      phase: demoPhase(targetType, profile),
       progress: 4,
       status: "QUEUED",
       started: "şimdi",
     };
 
     setScans((current) => [nextJob, ...current]);
-    setAllPaused(false);
+    setScopeConfirmed(false);
     setNotice(
-      `${nextJob.id} kuyruğa alındı. Bu demo işi exploit veya yıkıcı payload çalıştırmaz.`,
+      `${nextJob.id} örnek işi eklendi. Web demosu gerçek ağ isteği, crawl veya exploit çalıştırmaz.`,
     );
-
-    window.setTimeout(() => {
-      setScans((current) =>
-        current.map((scan) =>
-          scan.id === nextJob.id
-            ? {
-                ...scan,
-                status: "RUNNING",
-                phase:
-                  profile === "observe"
-                    ? "Pasif sinyal toplama"
-                    : "Başlık ve yapılandırma kontrolleri",
-                progress: 9,
-              }
-            : scan,
-        ),
-      );
-    }, 1200);
   }
 
   function toggleKillSwitch() {
-    setAllPaused((paused) => {
-      const nextPaused = !paused;
-      setScans((current) =>
-        current.map((scan) => ({
-          ...scan,
-          status: nextPaused
-            ? "PAUSED"
-            : scan.status === "QUEUED"
-              ? "QUEUED"
-              : "RUNNING",
-        })),
-      );
-      setNotice(
-        nextPaused
-          ? "Kill switch etkin: yeni istekler durduruldu ve worker'lar duraklatıldı."
-          : "Tarama kuyruğu kontrollü biçimde yeniden başlatıldı.",
-      );
-      return nextPaused;
-    });
+    const nextPaused = !allPaused;
+    setAllPaused(nextPaused);
+    setScans((current) =>
+      current.map((scan) => {
+        if (nextPaused) {
+          return scan.status === "PAUSED"
+            ? scan
+            : {
+                ...scan,
+                status: "PAUSED",
+                pausedFrom: scan.status,
+                pausedByKill: true,
+              };
+        }
+
+        return scan.status === "PAUSED" && scan.pausedByKill
+          ? {
+              ...scan,
+              status: scan.pausedFrom ?? "RUNNING",
+              pausedFrom: undefined,
+              pausedByKill: undefined,
+            }
+          : scan;
+      }),
+    );
+    setNotice(
+      nextPaused
+        ? "Demo kill switch etkin: örnek ilerleme ve yeni iş oluşturma durduruldu."
+        : "Örnek iş akışı kaldığı durumdan devam ediyor.",
+    );
   }
 
   function toggleSingleScan(scanId: string) {
@@ -330,7 +457,13 @@ export default function Home() {
         scan.id === scanId
           ? {
               ...scan,
-              status: scan.status === "PAUSED" ? "RUNNING" : "PAUSED",
+              status:
+                scan.status === "PAUSED"
+                  ? scan.pausedFrom ?? "RUNNING"
+                  : "PAUSED",
+              pausedFrom:
+                scan.status === "PAUSED" ? undefined : scan.status,
+              pausedByKill: undefined,
             }
           : scan,
       ),
@@ -343,7 +476,12 @@ export default function Home() {
         Ana içeriğe geç
       </a>
 
-      <aside className={`sidebar ${mobileNavOpen ? "sidebar-open" : ""}`}>
+      <aside
+        className={`sidebar ${mobileNavOpen ? "sidebar-open" : ""}`}
+        id="mobile-navigation"
+        aria-hidden={isMobileViewport && !mobileNavOpen ? true : undefined}
+        inert={isMobileViewport && !mobileNavOpen}
+      >
         <div className="brand-row">
           <div className="brand-mark" aria-hidden="true">
             W<span>C</span>
@@ -356,7 +494,8 @@ export default function Home() {
             className="nav-close"
             type="button"
             aria-label="Menüyü kapat"
-            onClick={() => setMobileNavOpen(false)}
+            ref={navCloseButtonRef}
+            onClick={() => closeMobileNav()}
           >
             ×
           </button>
@@ -375,34 +514,51 @@ export default function Home() {
 
         <nav className="primary-nav" aria-label="Ana menü">
           <span className="nav-heading">OPERASYON</span>
-          {navItems.map((item, index) => (
-            <a
-              className={`nav-item ${index === 0 ? "active" : ""}`}
-              href={index === 0 ? "#overview" : index === 1 ? "#scans" : index === 2 ? "#findings" : "#"}
-              key={item.label}
-              onClick={() => setMobileNavOpen(false)}
-            >
-              <span className="nav-icon" aria-hidden="true">
-                {item.icon}
-              </span>
-              <span>{item.label}</span>
-              {item.badge && <span className="nav-badge">{item.badge}</span>}
-            </a>
-          ))}
+          {navItems.map((item, index) =>
+            item.href ? (
+              <a
+                className={`nav-item ${index === 0 ? "active" : ""}`}
+                href={item.href}
+                aria-current={index === 0 ? "page" : undefined}
+                key={item.label}
+                onClick={() => closeMobileNav()}
+              >
+                <span className="nav-icon" aria-hidden="true">
+                  {item.icon}
+                </span>
+                <span>{item.label}</span>
+                {item.badge && <span className="nav-badge">{item.badge}</span>}
+              </a>
+            ) : (
+              <button
+                className="nav-item nav-item-disabled"
+                type="button"
+                disabled
+                key={item.label}
+              >
+                <span className="nav-icon" aria-hidden="true">
+                  {item.icon}
+                </span>
+                <span>{item.label}</span>
+                <span className="nav-soon">Yakında</span>
+              </button>
+            ),
+          )}
 
           <span className="nav-heading secondary-heading">YÖNETİM</span>
           {secondaryNavItems.map((item) => (
-            <a
-              className="nav-item"
-              href="#"
+            <button
+              className="nav-item nav-item-disabled"
+              type="button"
+              disabled
               key={item.label}
-              onClick={() => setMobileNavOpen(false)}
             >
               <span className="nav-icon" aria-hidden="true">
                 {item.icon}
               </span>
               <span>{item.label}</span>
-            </a>
+              <span className="nav-soon">Yakında</span>
+            </button>
           ))}
         </nav>
 
@@ -413,7 +569,7 @@ export default function Home() {
           </div>
           <p>
             {agentConnected
-              ? "WC-LOCAL-01 · Bağlı"
+              ? "Demo eşleşme gösterimi"
               : "Yerel dosya taramaları için gerekli"}
           </p>
           <button
@@ -422,12 +578,12 @@ export default function Home() {
               setAgentConnected((connected) => !connected);
               setNotice(
                 agentConnected
-                  ? "Masaüstü ajanı bağlantısı kesildi."
-                  : "Demo masaüstü ajanı salt okunur modda eşleştirildi.",
+                  ? "Demo ajan durumu sıfırlandı."
+                  : "Masaüstü ajanı bağlıymış gibi gösteren demo durumu etkinleştirildi.",
               );
             }}
           >
-            {agentConnected ? "Bağlantıyı kes" : "Ajanı eşleştir"}
+            {agentConnected ? "Demo durumunu sıfırla" : "Demo ajanı eşleştir"}
           </button>
         </div>
 
@@ -437,7 +593,11 @@ export default function Home() {
             <strong>Yerel kullanıcı</strong>
             <small>Proje yöneticisi</small>
           </span>
-          <button type="button" aria-label="Hesap menüsü">
+          <button
+            type="button"
+            aria-label="Hesap bilgisi"
+            onClick={() => setNotice("Bu interaktif demoda hesap yönetimi bulunmuyor.")}
+          >
             ···
           </button>
         </div>
@@ -448,7 +608,7 @@ export default function Home() {
           className="nav-backdrop"
           type="button"
           aria-label="Menüyü kapat"
-          onClick={() => setMobileNavOpen(false)}
+          onClick={() => closeMobileNav()}
         />
       )}
 
@@ -460,6 +620,8 @@ export default function Home() {
               type="button"
               aria-label="Menüyü aç"
               aria-expanded={mobileNavOpen}
+              aria-controls="mobile-navigation"
+              ref={mobileMenuButtonRef}
               onClick={() => setMobileNavOpen(true)}
             >
               ☰
@@ -484,19 +646,33 @@ export default function Home() {
               className="icon-button"
               type="button"
               aria-label="Bildirimler, iki okunmamış bildirim"
-              onClick={() => setNotice("2 bildirim: 1 tarama tamamlandı, 1 politika güncellendi.")}
+              onClick={() => setNotice("2 örnek bildirim: demo işi tamamlandı, politika taslağı güncellendi.")}
             >
               ○
               <span className="notification-pip" />
             </button>
             <div className="environment-chip">
-              <span /> Yerel demo
+              <span /> İnteraktif demo
             </div>
           </div>
         </header>
 
         <main id="main-content">
-          <div className={`safety-strip ${allPaused ? "safety-strip-paused" : ""}`}>
+          <div className="demo-banner" role="note">
+            <span className="demo-banner-label">DEMO</span>
+            <p>
+              <strong>İnteraktif arayüz önizlemesi</strong>
+              <span>
+                Skorlar, işler ve bulgular örnek veridir. Gerçek taramalar CLI veya
+                masaüstü uygulamasında çalışır.
+              </span>
+            </p>
+          </div>
+
+          <div
+            className={`safety-strip ${allPaused ? "safety-strip-paused" : ""}`}
+            id="kill-switch-state"
+          >
             <div>
               <span className="safety-icon" aria-hidden="true">
                 {allPaused ? "‖" : "✓"}
@@ -505,14 +681,14 @@ export default function Home() {
                 <strong>{allPaused ? "Taramalar duraklatıldı" : "Güvenlik sınırları etkin"}</strong>
                 <span>
                   {allPaused
-                    ? "Yeni istek üretilmiyor. Worker durumları korunuyor."
-                    : "Kapsam dışı istekler engellenir · Active profil kapalı · Worker'lar izole"}
+                    ? "Örnek ilerleme durdu; bu panel gerçek bir tarayıcıya bağlı değil."
+                    : "Web demosu ağ isteği üretmez · Active profil kapalı · Crawl ve exploit yok"}
                 </span>
               </p>
             </div>
             <button type="button" onClick={toggleKillSwitch}>
               <span aria-hidden="true">{allPaused ? "▶" : "■"}</span>
-              {allPaused ? "Kontrollü devam et" : "Kill switch"}
+              {allPaused ? "Demoya devam et" : "Demo kill switch"}
             </button>
           </div>
 
@@ -520,7 +696,7 @@ export default function Home() {
             <div>
               <span className="eyebrow">22 TEMMUZ 2026 · SON 24 SAAT</span>
               <h1>Günaydın, ekip.</h1>
-              <p>Varlıklarınızın risk görünümü ve devam eden güvenli taramalar.</p>
+              <p>Örnek risk görünümü ve güvenli tarama iş akışı önizlemesi.</p>
             </div>
             <a className="primary-action" href="#new-scan">
               <span aria-hidden="true">+</span> Yeni tarama
@@ -622,20 +798,19 @@ export default function Home() {
                 <div>
                   <span className="section-kicker">ORKESTRATÖR</span>
                   <h2>Yeni tarama oluştur</h2>
-                  <p>Hedef türünü seçin; en uygun analiz hattı otomatik kurulsun.</p>
+                  <p>Hedef türünü seçin; bu ekran yalnızca güvenli bir örnek iş oluşturur.</p>
                 </div>
                 <span className="safe-badge">
-                  <span /> Güvenli varsayılanlar
+                  <span /> Crawl / exploit yok
                 </span>
               </div>
 
               <form onSubmit={submitScan} noValidate>
-                <div className="target-tabs" role="tablist" aria-label="Hedef türü">
+                <div className="target-tabs" role="group" aria-label="Hedef türü">
                   {targetOptions.map((option) => (
                     <button
                       type="button"
-                      role="tab"
-                      aria-selected={targetType === option.id}
+                      aria-pressed={targetType === option.id}
                       className={targetType === option.id ? "selected" : ""}
                       key={option.id}
                       onClick={() => changeTargetType(option.id)}
@@ -653,21 +828,43 @@ export default function Home() {
 
                 <div className="field-group">
                   <label htmlFor="scan-target">{targetConfig[targetType].label}</label>
-                  <div className="input-shell">
+                  <div className={`input-shell ${showTargetError ? "invalid" : ""}`}>
                     <span className="input-prefix" aria-hidden="true">
                       {targetOptions.find((option) => option.id === targetType)?.icon}
                     </span>
                     <input
                       id="scan-target"
+                      type={targetType === "web" ? "url" : "text"}
                       value={target}
-                      onChange={(event) => setTarget(event.target.value)}
+                      onChange={(event) => {
+                        setTarget(event.target.value);
+                        setTargetTouched(true);
+                        setScopeConfirmed(false);
+                      }}
+                      onBlur={() => setTargetTouched(true)}
                       placeholder={targetConfig[targetType].placeholder}
                       autoComplete="off"
                       spellCheck="false"
+                      aria-invalid={showTargetError}
+                      aria-describedby="scan-target-help"
                     />
-                    <span className="input-status">Kapsam sınırı</span>
+                    <span className={`input-status ${showTargetError ? "invalid" : ""}`}>
+                      {showTargetError
+                        ? "Geçersiz"
+                        : targetValidation.valid
+                          ? "Biçim geçerli"
+                          : "Hedef bekleniyor"}
+                    </span>
                   </div>
-                  <span className="field-hint">{targetConfig[targetType].hint}</span>
+                  <p
+                    className={`field-hint ${showTargetError ? "field-error" : ""}`}
+                    id="scan-target-help"
+                    role={showTargetError ? "alert" : undefined}
+                  >
+                    {showTargetError
+                      ? targetValidation.error
+                      : targetConfig[targetType].hint}
+                  </p>
                 </div>
 
                 {isLocalTarget && (
@@ -683,18 +880,18 @@ export default function Home() {
                       </strong>
                       <p>
                         {agentConnected
-                          ? "WC-LOCAL-01 bu hedefi salt okunur ve izole iş alanında aktaracak."
-                          : "Tarayıcı yerel dosyalara erişemez. İmzalanmış ajan yolu güvenli biçimde worker'a aktarır."}
+                          ? "Arayüz önizlemesi için bağlantı simüle edildi; dosya aktarılmaz."
+                          : "Tarayıcı yerel dosyalara erişemez. Gerçek analiz masaüstü uygulamasında başlatılır."}
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => {
                         setAgentConnected(true);
-                        setNotice("Demo masaüstü ajanı salt okunur modda eşleştirildi.");
+                        setNotice("Demo ajan durumu etkinleştirildi; hiçbir yerel dosya okunmadı.");
                       }}
                     >
-                      {agentConnected ? "Ajan bağlı" : "Ajanı eşleştir"}
+                      {agentConnected ? "Demo ajan hazır" : "Demo ajanı eşleştir"}
                     </button>
                   </div>
                 )}
@@ -730,7 +927,7 @@ export default function Home() {
                       <span className="profile-radio" />
                       <span>
                         <strong>Safe</strong>
-                        <small>Zararsız kontroller</small>
+                        <small>Tek salt-okunur gözlem / statik analiz</small>
                       </span>
                       <em>Önerilen</em>
                     </button>
@@ -770,16 +967,17 @@ export default function Home() {
                     <span aria-hidden="true" />
                     <span>
                       <strong>Bu hedefi test etmeye yetkim var</strong>
-                      <small>Kapsam dışı yönlendirmeler ve varlıklar otomatik kesilir.</small>
+                      <small>Onay hedef değişince sıfırlanır. Web demosu gerçek tarama başlatmaz.</small>
                     </span>
                   </label>
                   <button
                     type="submit"
                     className="start-scan-button"
-                    disabled={!target.trim() || !scopeConfirmed}
+                    disabled={!scanCanStart}
+                    aria-describedby={allPaused ? "kill-switch-state" : undefined}
                   >
                     <span aria-hidden="true">▷</span>
-                    Güvenli taramayı başlat
+                    Güvenli örnek işi oluştur
                   </button>
                 </div>
               </form>
@@ -788,15 +986,15 @@ export default function Home() {
             <article className="running-card panel" id="scans">
               <div className="card-heading">
                 <div>
-                  <span className="section-kicker">CANLI KUYRUK</span>
-                  <h2>Çalışan taramalar</h2>
+                  <span className="section-kicker">ÖRNEK İŞ KUYRUĞU</span>
+                  <h2>Demo tarama işleri</h2>
                 </div>
                 <span className="live-indicator">
-                  <span /> {scans.filter((scan) => scan.status === "RUNNING").length} aktif
+                  <span /> Demo · {scans.filter((scan) => scan.status === "RUNNING").length} ilerliyor
                 </span>
               </div>
 
-              <div className="scan-list" aria-live="polite">
+              <div className="scan-list">
                 {scans.slice(0, 4).map((scan) => (
                   <div className="scan-item" key={scan.id}>
                     <div className="scan-item-top">
@@ -809,8 +1007,9 @@ export default function Home() {
                       </div>
                       <button
                         type="button"
-                        aria-label={`${scan.name} taramasını ${scan.status === "PAUSED" ? "sürdür" : "duraklat"}`}
+                        aria-label={`${scan.name} örnek işini ${scan.status === "PAUSED" ? "sürdür" : "duraklat"}`}
                         onClick={() => toggleSingleScan(scan.id)}
+                        disabled={allPaused}
                       >
                         {scan.status === "PAUSED" ? "▶" : "‖"}
                       </button>
@@ -846,9 +1045,9 @@ export default function Home() {
               <button
                 type="button"
                 className="view-all-button"
-                onClick={() => setNotice(`Kuyrukta toplam ${scans.length} tarama var.`)}
+                onClick={() => setNotice(`Demo listesinde toplam ${scans.length} örnek iş var.`)}
               >
-                Tüm taramaları gör <span aria-hidden="true">→</span>
+                Tüm örnek işleri gör <span aria-hidden="true">→</span>
               </button>
             </article>
           </section>

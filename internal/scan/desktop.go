@@ -11,6 +11,7 @@ import (
 type desktopStats struct {
 	archives         int
 	archiveLimitHit  bool
+	archiveParseErrs int
 	electronFiles    int
 	electronFindings int
 	asars            int
@@ -21,7 +22,13 @@ type desktopStats struct {
 }
 
 func (e *Engine) scanDesktop(ctx context.Context, _ Config, report *model.Report) error {
-	metadata, hashLimited, err := inspectTargetMetadata(report.Scan.Target, e.limits.MaxArchiveTotalBytes)
+	tree, err := collectFiles(report.Scan.Target, e.limits)
+	if err != nil {
+		report.Modules = append(report.Modules, model.ModuleResult{Name: "artifact-metadata", Status: model.ModuleError, Summary: "The desktop target could not be opened inside a bounded filesystem root.", Errors: []string{err.Error()}})
+		return err
+	}
+	defer tree.Close()
+	metadata, hashLimited, err := inspectTargetMetadata(tree, e.limits.MaxArchiveTotalBytes)
 	if err != nil {
 		report.Modules = append(report.Modules, model.ModuleResult{Name: "artifact-metadata", Status: model.ModuleError, Summary: "The desktop target metadata could not be read.", Errors: []string{err.Error()}})
 		return err
@@ -30,14 +37,11 @@ func (e *Engine) scanDesktop(ctx context.Context, _ Config, report *model.Report
 	metadataLimits := []string(nil)
 	if hashLimited {
 		metadataStatus = model.ModulePartial
-		metadataLimits = []string{"SHA-256 was not computed because the target exceeds the bounded hashing limit."}
+		metadataLimits = []string{"SHA-256 was not published because the bounded stable-read requirement was not met."}
 	}
 	report.Modules = append(report.Modules, model.ModuleResult{Name: "artifact-metadata", Status: metadataStatus, Summary: "Collected static desktop artifact type, size, and bounded hash metadata.", ItemsSeen: 1, Metadata: metadata, Limitations: metadataLimits})
 
-	_, files, walk, err := collectFiles(report.Scan.Target, e.limits)
-	if err != nil {
-		return err
-	}
+	files, walk := tree.Files, tree.Stats
 	stats := desktopStats{binaryFormats: make(map[string]int)}
 	var bytesRead int64
 	for _, record := range files {
@@ -53,8 +57,11 @@ func (e *Engine) scanDesktop(ctx context.Context, _ Config, report *model.Report
 				stats.archiveLimitHit = true
 			} else {
 				stats.archives++
-				archive, archiveErr := inspectZIP(record.Absolute, record.Relative, e.limits, report, nil)
-				if archiveErr != nil || archive.LimitHit {
+				archive, archiveErr := inspectZIP(record, record.Relative, e.limits, report, nil)
+				if archiveErr != nil {
+					stats.archiveParseErrs++
+					stats.archiveLimitHit = true
+				} else if archive.LimitHit {
 					stats.archiveLimitHit = true
 				}
 			}
@@ -92,12 +99,16 @@ func (e *Engine) scanDesktop(ctx context.Context, _ Config, report *model.Report
 	archiveStatus := model.ModuleSkipped
 	archiveSummary := "No desktop ZIP container was found in the bounded inventory."
 	archiveLimitations := []string(nil)
+	archiveErrors := []string(nil)
 	if stats.archives > 0 {
 		archiveStatus = model.ModuleComplete
 		archiveSummary = fmt.Sprintf("Inspected %d ZIP containers without extraction.", stats.archives)
 		if stats.archiveLimitHit {
 			archiveStatus = model.ModulePartial
 			archiveLimitations = []string{"At least one container or archive-count boundary prevented complete ZIP inspection."}
+		}
+		if stats.archiveParseErrs > 0 {
+			archiveErrors = []string{"One or more ZIP containers were malformed or use an unsupported structure."}
 		}
 	}
 	electronStatus := model.ModuleComplete
@@ -116,7 +127,7 @@ func (e *Engine) scanDesktop(ctx context.Context, _ Config, report *model.Report
 		formatMetadata[strings.ToLower(format)+"_count"] = fmt.Sprintf("%d", count)
 	}
 	report.Modules = append(report.Modules,
-		model.ModuleResult{Name: "archive-security", Status: archiveStatus, Summary: archiveSummary, ItemsSeen: stats.archives, Limitations: archiveLimitations},
+		model.ModuleResult{Name: "archive-security", Status: archiveStatus, Summary: archiveSummary, ItemsSeen: stats.archives, Limitations: archiveLimitations, Errors: archiveErrors},
 		model.ModuleResult{Name: "electron-configuration", Status: electronStatus, Summary: fmt.Sprintf("Inspected %d Electron-relevant files and produced %d configuration findings.", stats.electronFiles, stats.electronFindings), ItemsSeen: stats.electronFiles, Limitations: electronLimits},
 		model.ModuleResult{Name: "binary-protection", Status: model.ModulePartial, Summary: fmt.Sprintf("Recognized %d PE/ELF/Mach-O binaries and safely parsed bounded headers for %d.", stats.binaries, stats.binaryParsed), ItemsSeen: stats.binaries, Metadata: formatMetadata, Limitations: []string{"Header checks cover common ASLR/DEP/CFG, PIE, stack, and RELRO flags only; code signing, entitlements, packed binaries, fat Mach-O slices, and control-flow analysis require an isolated deep-analysis worker."}},
 	)

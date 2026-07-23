@@ -37,8 +37,9 @@ job ve finding sözleşmeleri korunarak modüller bağımsız servislere ayrıla
    metadata ağlarına karşı yeniden doğrulanır.
 3. `observe` profili TLS, sertifika, güvenlik başlıkları ve cookie özelliklerini
    okur.
-4. `safe` profili yalnız doğrulanmış origin içinde sınırlı crawl ve incelenmiş
-   şablon çalıştırır.
+4. İlk dilimde `observe` ve `safe` aynı tek salt-okunur HTTP gözlemini yapar.
+   Doğrulanmış origin içinde sınırlı crawl ve incelenmiş şablonlar Faz 2'de
+   eklenecektir.
 5. Subdomain/port genişletmesi ayrı bir doğrulanmış scope ister.
 
 ### Kaynak kod

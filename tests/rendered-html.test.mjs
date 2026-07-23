@@ -38,7 +38,7 @@ test("server-renders the WebCyber operations dashboard", async () => {
   assert.match(html, /Yeni tarama oluştur/);
   assert.match(html, /Örnek bulgular/);
   assert.match(html, /Masaüstü ajanı/);
-  assert.match(html, /property=["']og:image["'][^>]*content=["']http:\/\/localhost\/og\.png["']/i);
+  assert.match(html, /property=["']og:image["'][^>]*content=["']https:\/\/webcyber\.dev\/og\.png["']/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
@@ -62,6 +62,6 @@ test("removes starter assets and ships a real social card", async () => {
   await assert.rejects(
     access(new URL("../public/favicon.svg", import.meta.url)),
   );
-  await access(new URL("../LICENSE", templateRoot));
-  await access(new URL("../SECURITY.md", templateRoot));
+  await access(new URL("LICENSE", templateRoot));
+  await access(new URL("SECURITY.md", templateRoot));
 });

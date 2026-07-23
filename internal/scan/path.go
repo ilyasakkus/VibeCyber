@@ -11,9 +11,25 @@ import (
 )
 
 type fileRecord struct {
-	Absolute string
 	Relative string
 	Info     fs.FileInfo
+	root     *os.Root
+}
+
+type targetTree struct {
+	RootPath    string
+	Root        *os.Root
+	Files       []fileRecord
+	Stats       walkStats
+	TargetInfo  fs.FileInfo
+	TargetIsDir bool
+}
+
+func (t *targetTree) Close() error {
+	if t == nil || t.Root == nil {
+		return nil
+	}
+	return t.Root.Close()
 }
 
 type walkStats struct {
@@ -28,74 +44,92 @@ var ignoredDirectories = map[string]struct{}{
 	"dist": {}, "build": {}, "coverage": {},
 }
 
-func collectFiles(target string, limits Limits) (string, []fileRecord, walkStats, error) {
+func collectFiles(target string, limits Limits) (*targetTree, error) {
 	var stats walkStats
 	abs, err := filepath.Abs(target)
 	if err != nil {
-		return "", nil, stats, fmt.Errorf("resolve target: %w", err)
+		return nil, fmt.Errorf("resolve target: %w", err)
 	}
 	initial, err := os.Lstat(abs)
 	if err != nil {
-		return "", nil, stats, fmt.Errorf("inspect target: %w", err)
+		return nil, fmt.Errorf("inspect target: %w", err)
 	}
 	if initial.Mode()&os.ModeSymlink != 0 {
-		return "", nil, stats, fmt.Errorf("target must not be a symbolic link")
+		return nil, fmt.Errorf("target must not be a symbolic link")
 	}
 	realTarget, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		return "", nil, stats, fmt.Errorf("resolve target links: %w", err)
+		return nil, fmt.Errorf("resolve target links: %w", err)
 	}
 	realTarget, err = filepath.Abs(realTarget)
 	if err != nil {
-		return "", nil, stats, fmt.Errorf("normalize target: %w", err)
+		return nil, fmt.Errorf("normalize target: %w", err)
 	}
 	info, err := os.Stat(realTarget)
 	if err != nil {
-		return "", nil, stats, fmt.Errorf("stat target: %w", err)
+		return nil, fmt.Errorf("stat target: %w", err)
 	}
-	if !info.IsDir() {
-		if !info.Mode().IsRegular() {
-			return "", nil, stats, fmt.Errorf("target is not a regular file or directory")
-		}
-		return filepath.Dir(realTarget), []fileRecord{{Absolute: realTarget, Relative: filepath.Base(realTarget), Info: info}}, stats, nil
+	if !os.SameFile(initial, info) {
+		return nil, fmt.Errorf("target changed while its root was being established")
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("target is not a regular file or directory")
 	}
 
-	root := filepath.Clean(realTarget)
+	rootPath := filepath.Clean(realTarget)
+	if !info.IsDir() {
+		rootPath = filepath.Dir(rootPath)
+	}
+	rootPathInfo, err := os.Stat(rootPath)
+	if err != nil || !rootPathInfo.IsDir() {
+		return nil, fmt.Errorf("stat bounded target root: %w", err)
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("open bounded target root: %w", err)
+	}
+	openedRootInfo, err := root.Stat(".")
+	if err != nil || !os.SameFile(rootPathInfo, openedRootInfo) {
+		root.Close()
+		return nil, fmt.Errorf("bounded target root changed while it was being opened")
+	}
+	tree := &targetTree{RootPath: rootPath, Root: root, TargetInfo: info, TargetIsDir: info.IsDir(), Stats: stats}
+	if !info.IsDir() {
+		relative := filepath.Base(realTarget)
+		rootedInfo, statErr := root.Lstat(relative)
+		if statErr != nil || rootedInfo.Mode()&os.ModeSymlink != 0 || !rootedInfo.Mode().IsRegular() || !os.SameFile(info, rootedInfo) {
+			root.Close()
+			return nil, fmt.Errorf("target file changed while its bounded root was being established")
+		}
+		tree.Files = []fileRecord{{Relative: filepath.ToSlash(relative), Info: rootedInfo, root: root}}
+		tree.TargetInfo = rootedInfo
+		return tree, nil
+	}
+
 	files := make([]fileRecord, 0, min(limits.MaxFiles, 256))
-	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(root.FS(), ".", func(relative string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			stats.FilesSkipped++
 			return nil
 		}
-		if path == root {
+		if relative == "." {
 			return nil
 		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil || !pathWithin(root, path) {
-			stats.FilesSkipped++
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		depth := strings.Count(filepath.Clean(rel), string(filepath.Separator)) + 1
+		depth := strings.Count(relative, "/") + 1
 		if depth > limits.MaxDepth {
 			stats.LimitHit = true
 			if entry.IsDir() {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
 			stats.Symlinks++
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
 			return nil
 		}
 		if entry.IsDir() {
 			if _, ignored := ignoredDirectories[entry.Name()]; ignored {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
 			return nil
 		}
@@ -108,23 +142,23 @@ func collectFiles(target string, limits Limits) (string, []fileRecord, walkStats
 			stats.FilesSkipped++
 			return nil
 		}
-		// Resolve every candidate and ensure that even nested links cannot escape.
-		resolved, resolveErr := filepath.EvalSymlinks(path)
-		if resolveErr != nil || !pathWithin(root, resolved) {
-			stats.FilesSkipped++
-			return nil
-		}
 		files = append(files, fileRecord{
-			Absolute: resolved,
-			Relative: filepath.ToSlash(rel),
+			Relative: filepath.ToSlash(relative),
 			Info:     entryInfo,
+			root:     root,
 		})
 		return nil
 	})
 	if err != nil {
-		return root, files, stats, fmt.Errorf("walk target: %w", err)
+		root.Close()
+		return nil, fmt.Errorf("walk bounded target: %w", err)
 	}
-	return root, files, stats, nil
+	tree.Files = files
+	tree.Stats = stats
+	if rootedInfo, statErr := root.Stat("."); statErr == nil {
+		tree.TargetInfo = rootedInfo
+	}
+	return tree, nil
 }
 
 func pathWithin(root, candidate string) bool {
@@ -136,7 +170,7 @@ func pathWithin(root, candidate string) bool {
 }
 
 func readLimitedFile(record fileRecord, maxBytes int64) ([]byte, bool, error) {
-	f, _, err := openRegularNoFollow(record.Absolute)
+	f, _, err := openRecord(record)
 	if err != nil {
 		return nil, false, err
 	}
@@ -151,17 +185,24 @@ func readLimitedFile(record fileRecord, maxBytes int64) ([]byte, bool, error) {
 	return data, false, nil
 }
 
-// openRegularNoFollow verifies the directory entry both before and after open.
-// Comparing the opened inode closes the common lstat/open symlink-swap window.
-func openRegularNoFollow(path string) (*os.File, fs.FileInfo, error) {
-	before, err := os.Lstat(path)
+// openRecord uses os.Root for component-wise boundary enforcement, then checks
+// the enumerated, pre-open, and opened file identities to detect replacement.
+func openRecord(record fileRecord) (*os.File, fs.FileInfo, error) {
+	if record.root == nil {
+		return nil, nil, fmt.Errorf("bounded root is unavailable")
+	}
+	name := filepath.FromSlash(record.Relative)
+	before, err := record.root.Lstat(name)
 	if err != nil {
 		return nil, nil, err
 	}
 	if before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() {
 		return nil, nil, fmt.Errorf("file is a symbolic link or is not regular")
 	}
-	f, err := os.Open(path)
+	if record.Info == nil || !os.SameFile(record.Info, before) {
+		return nil, nil, fmt.Errorf("file changed after bounded enumeration")
+	}
+	f, err := record.root.Open(name)
 	if err != nil {
 		return nil, nil, err
 	}

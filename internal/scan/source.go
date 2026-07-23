@@ -52,11 +52,13 @@ type sourceStats struct {
 }
 
 func (e *Engine) scanSource(ctx context.Context, _ Config, report *model.Report) error {
-	_, files, walk, err := collectFiles(report.Scan.Target, e.limits)
+	tree, err := collectFiles(report.Scan.Target, e.limits)
 	if err != nil {
 		report.Modules = append(report.Modules, model.ModuleResult{Name: "file-inventory", Status: model.ModuleError, Summary: "The source target could not be enumerated.", Errors: []string{err.Error()}})
 		return err
 	}
+	defer tree.Close()
+	files, walk := tree.Files, tree.Stats
 	stats := sourceStats{}
 	secretFindings := 0
 	electronFindings := 0

@@ -21,12 +21,10 @@ func TestBoundedPEHeaderFindsMissingMitigations(t *testing.T) {
 	if err := os.WriteFile(filename, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filename)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tree := collectTargetForTest(t, filename)
+	defer tree.Close()
 	report := model.Report{}
-	recognized, complete, format := inspectBinaryProtection(fileRecord{Absolute: filename, Relative: "sample.exe", Info: info}, &report)
+	recognized, complete, format := inspectBinaryProtection(tree.Files[0], &report)
 	if !recognized || !complete || format != "PE" {
 		t.Fatalf("recognized=%v complete=%v format=%q", recognized, complete, format)
 	}

@@ -36,9 +36,9 @@
             <h1 id="page-title">Varliginizi secin.<br /><span>Riskleri gorun.</span></h1>
           </div>
           <p class="intro-copy">
-            Web hedeflerini, kaynak kodlarini ve uygulama paketlerini tek bir guvenli
-            masaustu akisinda inceleyin. Tarama yalnizca sizin acikca sectiginiz hedefte
-            baslatilir.
+            Web MVP'si hedefe tek bir salt-okunur GET istegi yapar. Kaynak kodu ve
+            uygulama paketleri yerelde statik olarak incelenir; uygulama kodu calistirilmaz.
+            Crawl, form gonderimi, fuzzing ve aktif payload bu surumde yoktur.
           </p>
         </section>
 
@@ -52,7 +52,7 @@
                   <p>Analiz edilecek varlik katmanini secin.</p>
                 </div>
               </div>
-              <span class="local-badge">Cihazdan cikmaz</span>
+              <span class="local-badge">Sinirli MVP</span>
             </div>
 
             <div class="target-tabs" role="tablist" aria-label="Hedef turleri">
@@ -121,7 +121,7 @@
                   <span class="step-number">02</span>
                   <div>
                     <h2>Tarama profili</h2>
-                    <p>Hedefe uygun etkilesim duzeyini belirleyin.</p>
+                    <p>Bu MVP'de iki profil de pasiftir; aktif test calistirilmaz.</p>
                   </div>
                 </div>
               </div>
@@ -130,14 +130,14 @@
                 <label class="profile-card">
                   <input type="radio" name="profile" value="observe" checked />
                   <span class="radio-mark"></span>
-                  <span><strong>Observe</strong><small>Dusuk etkili gozlem ve yapilandirma analizi</small></span>
+                  <span><strong>Observe</strong><small>Web'de tek GET; yerelde statik analiz</small></span>
                   <span class="profile-tag">Onerilen</span>
                 </label>
                 <label class="profile-card">
                   <input type="radio" name="profile" value="safe" />
                   <span class="radio-mark"></span>
-                  <span><strong>Safe</strong><small>Kontrollu, guvenli aktif kontroller</small></span>
-                  <span class="profile-tag muted">Daha derin</span>
+                  <span><strong>Safe</strong><small>MVP'de pasif; crawl veya aktif kontrol yok</small></span>
+                  <span class="profile-tag muted">Pasif</span>
                 </label>
               </div>
 
@@ -149,7 +149,7 @@
 
               <div class="form-footer">
                 <div class="limits">
-                  <span>15 dk sure siniri</span>
+                  <span>2 dk motor + 15 sn kapanma payi</span>
                   <span>8 MB cikti siniri</span>
                 </div>
                 <button id="start-scan" class="primary-button" type="submit" disabled>

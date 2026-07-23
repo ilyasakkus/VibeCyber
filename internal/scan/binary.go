@@ -23,7 +23,7 @@ const (
 // inspectBinaryProtection parses only bounded executable headers. It never
 // loads or executes the artifact and avoids general-purpose binary parsers.
 func inspectBinaryProtection(record fileRecord, report *model.Report) (recognized bool, complete bool, format string) {
-	f, openedInfo, err := openRegularNoFollow(record.Absolute)
+	f, openedInfo, err := openRecord(record)
 	if err != nil {
 		return false, false, ""
 	}

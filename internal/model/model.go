@@ -125,7 +125,16 @@ type Report struct {
 	Modules       []ModuleResult `json:"modules"`
 	Findings      []Finding      `json:"findings"`
 	Limitations   []string       `json:"limitations,omitempty"`
+	seenFindings  map[string]struct{}
 }
+
+type AddFindingResult uint8
+
+const (
+	FindingAdded AddFindingResult = iota
+	FindingDuplicate
+	FindingCapped
+)
 
 // NewScanID returns a non-identifying random scan identifier.
 func NewScanID() string {
@@ -163,10 +172,7 @@ func Fingerprint(f Finding) string {
 func NormalizeFindings(in []Finding) []Finding {
 	unique := make(map[string]Finding, len(in))
 	for _, finding := range in {
-		finding = sanitizeFinding(finding)
-		if finding.Fingerprint == "" {
-			finding.Fingerprint = Fingerprint(finding)
-		}
+		finding = CanonicalFinding(finding)
 		if _, exists := unique[finding.Fingerprint]; !exists {
 			unique[finding.Fingerprint] = finding
 		}
@@ -188,6 +194,41 @@ func NormalizeFindings(in []Finding) []Finding {
 		return out[i].Evidence.Line < out[j].Evidence.Line
 	})
 	return out
+}
+
+// CanonicalFinding sanitizes bounded evidence and always replaces any
+// caller-supplied fingerprint with WebCyber's canonical fingerprint.
+func CanonicalFinding(f Finding) Finding {
+	f = sanitizeFinding(f)
+	f.Fingerprint = Fingerprint(f)
+	return f
+}
+
+// AddFinding canonicalizes and deduplicates before applying the unique cap.
+func (r *Report) AddFinding(f Finding, uniqueCap int) AddFindingResult {
+	if r.seenFindings == nil {
+		r.seenFindings = make(map[string]struct{}, len(r.Findings)+1)
+		canonicalExisting := make([]Finding, 0, len(r.Findings))
+		for _, existing := range r.Findings {
+			existing = CanonicalFinding(existing)
+			if _, duplicate := r.seenFindings[existing.Fingerprint]; duplicate {
+				continue
+			}
+			r.seenFindings[existing.Fingerprint] = struct{}{}
+			canonicalExisting = append(canonicalExisting, existing)
+		}
+		r.Findings = canonicalExisting
+	}
+	f = CanonicalFinding(f)
+	if _, duplicate := r.seenFindings[f.Fingerprint]; duplicate {
+		return FindingDuplicate
+	}
+	if uniqueCap >= 0 && len(r.seenFindings) >= uniqueCap {
+		return FindingCapped
+	}
+	r.seenFindings[f.Fingerprint] = struct{}{}
+	r.Findings = append(r.Findings, f)
+	return FindingAdded
 }
 
 func sanitizeFinding(f Finding) Finding {

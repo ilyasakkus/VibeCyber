@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -21,6 +22,8 @@ const (
 func (f Format) Valid() bool { return f == FormatJSON || f == FormatSARIF }
 
 func Write(w io.Writer, format Format, input model.Report) error {
+	input.Findings = model.NormalizeFindings(input.Findings)
+	input.Summary = model.BuildSummary(input.Findings)
 	switch format {
 	case FormatJSON:
 		return writeJSON(w, input)
@@ -111,9 +114,7 @@ func writeSARIF(w io.Writer, input model.Report) error {
 	rulesByID := make(map[string]sarifRule)
 	results := make([]sarifResult, 0, len(input.Findings))
 	for _, finding := range input.Findings {
-		if finding.Fingerprint == "" {
-			finding.Fingerprint = model.Fingerprint(finding)
-		}
+		finding = model.CanonicalFinding(finding)
 		if _, exists := rulesByID[finding.RuleID]; !exists {
 			rulesByID[finding.RuleID] = sarifRule{
 				ID:                   finding.RuleID,
@@ -236,9 +237,27 @@ func sarifFindingLocation(finding model.Finding) *sarifLocation {
 	if uri == "" {
 		return nil
 	}
-	location := &sarifLocation{PhysicalLocation: sarifPhysicalLocation{ArtifactLocation: sarifArtifactLocation{URI: strings.ReplaceAll(uri, "\\", "/")}}}
+	location := &sarifLocation{PhysicalLocation: sarifPhysicalLocation{ArtifactLocation: sarifArtifactLocation{URI: sarifArtifactURI(uri)}}}
 	if finding.Evidence.Line > 0 {
 		location.PhysicalLocation.Region = &sarifRegion{StartLine: finding.Evidence.Line}
 	}
 	return location
+}
+
+func sarifArtifactURI(raw string) string {
+	normalized := strings.ReplaceAll(raw, "\\", "/")
+	if parsed, err := url.Parse(normalized); err == nil && parsed.Scheme != "" && !(len(parsed.Scheme) == 1 && len(normalized) > 2 && normalized[1] == ':') {
+		if parsed.RawQuery != "" {
+			if values, queryErr := url.ParseQuery(parsed.RawQuery); queryErr == nil {
+				parsed.RawQuery = values.Encode()
+			} else {
+				parsed.RawQuery = ""
+			}
+		}
+		return parsed.String()
+	}
+	if len(normalized) > 2 && normalized[1] == ':' {
+		return (&url.URL{Scheme: "file", Path: "/" + normalized}).String()
+	}
+	return (&url.URL{Path: normalized}).String()
 }

@@ -143,22 +143,37 @@ function showResult(result) {
   elements.resultPanel.classList.toggle("is-error", result.status !== "success");
   elements.resultTitle.textContent =
     result.status === "success"
-      ? "Tarama raporu"
+      ? result.report?.scan?.status === "partial"
+        ? "Kismi tarama raporu"
+        : "Tarama raporu"
       : result.status === "cancelled"
         ? "Tarama iptal edildi"
-        : "Tarama tamamlanamadi";
+        : result.report
+          ? "Tarama tamamlanamadi - rapor mevcut"
+          : "Tarama tamamlanamadi";
   elements.resultMeta.textContent = formatDuration(result.durationMs);
 
-  if (result.status === "success") {
+  let serializedReport = null;
+  if (result.report) {
     try {
-      elements.resultOutput.textContent = JSON.stringify(result.report, null, 2);
+      serializedReport = JSON.stringify(result.report, null, 2);
     } catch {
-      elements.resultOutput.textContent = "Rapor guvenli bicimde goruntulenemedi.";
       elements.resultPanel.classList.add("is-error");
     }
+  }
+
+  if (result.status === "success") {
+    elements.resultOutput.textContent =
+      serializedReport ?? "Rapor guvenli bicimde goruntulenemedi.";
   } else {
     const details = [result.error, result.stderr].filter(Boolean).join("\n\n");
-    elements.resultOutput.textContent = details || "Ayrintili hata bilgisi bulunmuyor.";
+    const sections = [details || "Ayrintili hata bilgisi bulunmuyor."];
+    if (serializedReport) {
+      sections.push(`Dogrulanmis tarama raporu:\n${serializedReport}`);
+    } else if (result.report) {
+      sections.push("Rapor guvenli bicimde goruntulenemedi.");
+    }
+    elements.resultOutput.textContent = sections.join("\n\n");
   }
   elements.resultPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
