@@ -463,15 +463,22 @@ export default function Home() {
   const [severityFilter, setSeverityFilter] = useState<"All" | Severity>(
     "All",
   );
+  const [selectedTargetFilter, setSelectedTargetFilter] =
+    useState<string>("All Targets");
   const [highConfidenceOnly, setHighConfidenceOnly] = useState(false);
   const [visibleFindingLimit, setVisibleFindingLimit] =
     useState(FINDING_PAGE_SIZE);
+  const [activeFindingModal, setActiveFindingModal] =
+    useState<UIFinding | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const targetTypeRef = useRef<TargetType>("web");
   const reportCacheRef = useRef<Map<string, ScanReport>>(new Map());
   const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
   const navCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   const localPathsEnabled = Boolean(health?.capabilities.localPaths);
   const isLocalTarget = targetType !== "web";
@@ -564,6 +571,13 @@ export default function Home() {
     () => aggregateReportSummary(assessmentScans),
     [assessmentScans],
   );
+  const availableTargets = useMemo(() => {
+    const list = new Set<string>();
+    for (const scan of scans) {
+      if (scan.target) list.add(scan.target);
+    }
+    return Array.from(list);
+  }, [scans]);
   const filteredFindings = useMemo(
     () =>
       allFindings.filter((finding) => {
@@ -571,9 +585,13 @@ export default function Home() {
           severityFilter === "All" || finding.severity === severityFilter;
         const confidenceMatches =
           !highConfidenceOnly || finding.confidence === "high";
-        return severityMatches && confidenceMatches;
+        const targetMatches =
+          selectedTargetFilter === "All Targets" ||
+          finding.target === selectedTargetFilter ||
+          finding.target.startsWith(selectedTargetFilter);
+        return severityMatches && confidenceMatches && targetMatches;
       }),
-    [allFindings, highConfidenceOnly, severityFilter],
+    [allFindings, highConfidenceOnly, severityFilter, selectedTargetFilter],
   );
   const displayedFindings = filteredFindings.slice(0, visibleFindingLimit);
   const technicalRiskIndex = useMemo(
@@ -829,6 +847,79 @@ export default function Home() {
     setActiveNotice(false);
   }
 
+  function openPathPicker() {
+    if (targetType === "source") {
+      folderInputRef.current?.click();
+    } else if (targetType === "mobile") {
+      if (fileInputRef.current) {
+        fileInputRef.current.setAttribute("accept", ".apk,.ipa");
+        fileInputRef.current.click();
+      }
+    } else if (targetType === "desktop") {
+      if (fileInputRef.current) {
+        fileInputRef.current.setAttribute("accept", ".app,.exe,.bin,.dmg,application/*");
+        fileInputRef.current.click();
+      }
+    }
+  }
+
+  function handleFolderSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+    const first = files[0];
+    const nativePath = (first as unknown as { path?: string }).path;
+    if (nativePath) {
+      const relativePath = first.webkitRelativePath || "";
+      if (relativePath && nativePath.endsWith(relativePath)) {
+        const folderPath = nativePath.slice(
+          0,
+          nativePath.length - relativePath.length + relativePath.split("/")[0].length,
+        );
+        setTarget(folderPath);
+      } else {
+        setTarget(nativePath);
+      }
+    } else if (first.webkitRelativePath) {
+      const rootFolder = first.webkitRelativePath.split("/")[0];
+      setTarget(rootFolder);
+    }
+    setTargetTouched(true);
+    setScopeConfirmed(false);
+  }
+
+  function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+    const first = files[0];
+    const nativePath = (first as unknown as { path?: string }).path;
+    if (nativePath) {
+      setTarget(nativePath);
+    } else {
+      setTarget(first.name);
+    }
+    setTargetTouched(true);
+    setScopeConfirmed(false);
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDraggingOver(false);
+    const files = event.dataTransfer.files;
+    if (files && files.length > 0) {
+      const first = files[0];
+      const nativePath = (first as unknown as { path?: string }).path;
+      if (nativePath) {
+        setTarget(nativePath);
+      } else if (first.webkitRelativePath) {
+        setTarget(first.webkitRelativePath.split("/")[0]);
+      } else {
+        setTarget(first.name);
+      }
+      setTargetTouched(true);
+      setScopeConfirmed(false);
+    }
+  }
+
   function closeMobileNav(restoreFocus = true) {
     setMobileNavOpen(false);
     if (restoreFocus && isMobileViewport) {
@@ -924,22 +1015,182 @@ export default function Home() {
     }
   }
 
-  function exportReports() {
-    const reports = scans.flatMap((scan) => (scan.report ? [scan.report] : []));
-    if (reports.length === 0) {
-      setNotice("No loaded reports available for export.");
-      return;
-    }
-    const blob = new Blob([JSON.stringify(reports, null, 2)], {
-      type: "application/json",
-    });
+  function downloadBlob(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `vibe-cyber-reports-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
-    setNotice(`Downloaded ${reports.length} loaded JSON report(s).`);
+  }
+
+  function exportFindingsFormat(format: "json" | "csv" | "xlsx") {
+    const targetFindings = filteredFindings;
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const targetTag =
+      selectedTargetFilter === "All Targets"
+        ? "all"
+        : selectedTargetFilter.replace(/[^a-z0-9]/gi, "_");
+
+    if (targetFindings.length === 0 && scans.length === 0) {
+      setNotice("No loaded findings or scan reports available to export.");
+      return;
+    }
+
+    if (format === "json") {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        filter: {
+          severity: severityFilter,
+          target: selectedTargetFilter,
+          highConfidenceOnly,
+        },
+        count: targetFindings.length,
+        findings: targetFindings,
+        reports: scans.flatMap((s) => (s.report ? [s.report] : [])),
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      downloadBlob(blob, `vibe-cyber-findings-${targetTag}-${timestamp}.json`);
+      setNotice(`Exported ${targetFindings.length} finding(s) as JSON.`);
+    } else if (format === "csv") {
+      const headers = [
+        "Rule ID",
+        "Title",
+        "Target",
+        "Severity",
+        "Confidence",
+        "Age",
+        "Description",
+        "Remediation",
+      ];
+      const escapeCSV = (str: string) => `"${(str || "").replace(/"/g, '""')}"`;
+      const rows = targetFindings.map((f) => [
+        escapeCSV(f.id),
+        escapeCSV(f.title),
+        escapeCSV(f.target),
+        escapeCSV(f.severity),
+        escapeCSV(f.confidence),
+        escapeCSV(f.age),
+        escapeCSV(f.description),
+        escapeCSV(f.remediation || ""),
+      ]);
+      const csvContent =
+        "\uFEFF" + [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      downloadBlob(blob, `vibe-cyber-findings-${targetTag}-${timestamp}.csv`);
+      setNotice(`Exported ${targetFindings.length} finding(s) as CSV.`);
+    } else if (format === "xlsx") {
+      const escapeXML = (str: string) =>
+        (str || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&apos;");
+
+      const rowsXML = targetFindings
+        .map(
+          (f) => `
+   <Row>
+    <Cell ss:StyleID="Default"><Data ss:Type="String">${escapeXML(f.id)}</Data></Cell>
+    <Cell ss:StyleID="Default"><Data ss:Type="String">${escapeXML(f.title)}</Data></Cell>
+    <Cell ss:StyleID="Default"><Data ss:Type="String">${escapeXML(f.target)}</Data></Cell>
+    <Cell ss:StyleID="${f.severityKey ? f.severityKey.charAt(0).toUpperCase() + f.severityKey.slice(1) : "Default"}"><Data ss:Type="String">${escapeXML(f.severity)}</Data></Cell>
+    <Cell ss:StyleID="Default"><Data ss:Type="String">${escapeXML(f.confidence)}</Data></Cell>
+    <Cell ss:StyleID="Default"><Data ss:Type="String">${escapeXML(f.age)}</Data></Cell>
+    <Cell ss:StyleID="Default"><Data ss:Type="String">${escapeXML(f.description)}</Data></Cell>
+    <Cell ss:StyleID="Default"><Data ss:Type="String">${escapeXML(f.remediation || "")}</Data></Cell>
+   </Row>`,
+        )
+        .join("");
+
+      const xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Styles>
+  <Style ss:ID="Header">
+   <Font ss:Bold="1" ss:Color="#FFFFFF"/>
+   <Interior ss:Color="#0F172A" ss:Pattern="Solid"/>
+   <Alignment ss:Horizontal="Center"/>
+  </Style>
+  <Style ss:ID="Default">
+   <Alignment ss:Vertical="Top" ss:WrapText="1"/>
+  </Style>
+  <Style ss:ID="Critical">
+   <Font ss:Bold="1" ss:Color="#991B1B"/>
+   <Interior ss:Color="#FEE2E2" ss:Pattern="Solid"/>
+  </Style>
+  <Style ss:ID="High">
+   <Font ss:Bold="1" ss:Color="#9F1239"/>
+   <Interior ss:Color="#FFE4E6" ss:Pattern="Solid"/>
+  </Style>
+  <Style ss:ID="Medium">
+   <Font ss:Bold="1" ss:Color="#92400E"/>
+   <Interior ss:Color="#FEF3C7" ss:Pattern="Solid"/>
+  </Style>
+  <Style ss:ID="Low">
+   <Font ss:Bold="1" ss:Color="#075985"/>
+   <Interior ss:Color="#E0F2FE" ss:Pattern="Solid"/>
+  </Style>
+  <Style ss:ID="Info">
+   <Font ss:Color="#334155"/>
+   <Interior ss:Color="#F1F5F9" ss:Pattern="Solid"/>
+  </Style>
+ </Styles>
+ <Worksheet ss:Name="Findings">
+  <Table>
+   <Column ss:Width="140"/>
+   <Column ss:Width="220"/>
+   <Column ss:Width="200"/>
+   <Column ss:Width="90"/>
+   <Column ss:Width="90"/>
+   <Column ss:Width="90"/>
+   <Column ss:Width="300"/>
+   <Column ss:Width="300"/>
+   <Row ss:StyleID="Header">
+    <Cell><Data ss:Type="String">Rule ID</Data></Cell>
+    <Cell><Data ss:Type="String">Title</Data></Cell>
+    <Cell><Data ss:Type="String">Target</Data></Cell>
+    <Cell><Data ss:Type="String">Severity</Data></Cell>
+    <Cell><Data ss:Type="String">Confidence</Data></Cell>
+    <Cell><Data ss:Type="String">Found</Data></Cell>
+    <Cell><Data ss:Type="String">Description</Data></Cell>
+    <Cell><Data ss:Type="String">Remediation</Data></Cell>
+   </Row>${rowsXML}
+  </Table>
+ </Worksheet>
+</Workbook>`;
+
+      const blob = new Blob([xmlContent], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      downloadBlob(blob, `vibe-cyber-findings-${targetTag}-${timestamp}.xlsx`);
+      setNotice(`Exported ${targetFindings.length} finding(s) as XLSX.`);
+    }
+  }
+
+  function exportReports() {
+    exportFindingsFormat("json");
+  }
+
+  function inspectJobSummary(scan: ScanJob) {
+    const findingCount = scan.report?.findings?.length ?? 0;
+    const statusLabel = statusLabels[scan.status] || scan.status;
+    const limitations = scan.report?.limitations?.join(" ") || "";
+    if (findingCount === 0) {
+      setNotice(
+        `Job ${scan.id} (${scan.target}): Status is ${statusLabel} with 0 findings detected. ${limitations ? `Limitations: ${limitations}` : "Secrets, electron config, and manifests were scanned."}`,
+      );
+    } else {
+      setNotice(
+        `Job ${scan.id} (${scan.target}): Status is ${statusLabel} with ${findingCount} finding(s) detected.`,
+      );
+    }
   }
 
   const navItems = [
@@ -1371,7 +1622,15 @@ export default function Home() {
 
                 <div className="field-group">
                   <label htmlFor="scan-target">{targetConfig[targetType].label}</label>
-                  <div className={`input-shell ${showTargetError ? "invalid" : ""}`}>
+                  <div
+                    className={`input-shell ${showTargetError ? "invalid" : ""} ${isDraggingOver ? "dragging" : ""}`}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsDraggingOver(true);
+                    }}
+                    onDragLeave={() => setIsDraggingOver(false)}
+                    onDrop={handleDrop}
+                  >
                     <span className="input-prefix" aria-hidden="true">
                       {targetOptions.find((option) => option.id === targetType)?.icon}
                     </span>
@@ -1392,6 +1651,17 @@ export default function Home() {
                       aria-describedby="scan-target-help"
                       disabled={apiState !== "online"}
                     />
+                    {isLocalTarget && (
+                      <button
+                        type="button"
+                        className="browse-target-button"
+                        onClick={openPathPicker}
+                        disabled={apiState !== "online"}
+                        title="Browse local files/folders on your PC"
+                      >
+                        <span aria-hidden="true">📁</span> Browse...
+                      </button>
+                    )}
                     <span className={`input-status ${showTargetError ? "invalid" : ""}`}>
                       {showTargetError
                         ? "Invalid"
@@ -1400,6 +1670,56 @@ export default function Home() {
                           : "Awaiting target"}
                     </span>
                   </div>
+                  <input
+                    type="file"
+                    ref={folderInputRef}
+                    style={{ display: "none" }}
+                    {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+                    onChange={handleFolderSelect}
+                  />
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    style={{ display: "none" }}
+                    onChange={handleFileSelect}
+                  />
+
+                  {isLocalTarget && (
+                    <div className="quick-path-pills" role="group" aria-label="Quick path suggestions">
+                      <span className="pills-label">Quick paths:</span>
+                      <button
+                        type="button"
+                        className="path-pill"
+                        onClick={() => {
+                          setTarget(".");
+                          setTargetTouched(true);
+                          setScopeConfirmed(false);
+                        }}
+                      >
+                        . (Current Repo)
+                      </button>
+                      {scans
+                        .filter((s) => s.type === targetType && s.target)
+                        .map((s) => s.target)
+                        .filter((value, index, self) => self.indexOf(value) === index)
+                        .slice(0, 3)
+                        .map((path) => (
+                          <button
+                            key={path}
+                            type="button"
+                            className="path-pill"
+                            onClick={() => {
+                              setTarget(path);
+                              setTargetTouched(true);
+                              setScopeConfirmed(false);
+                            }}
+                          >
+                            {path}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+
                   <p
                     className={`field-hint ${showTargetError ? "field-error" : ""}`}
                     id="scan-target-help"
@@ -1533,7 +1853,12 @@ export default function Home() {
                         <div className={`scan-kind ${scan.type}`} aria-hidden="true">
                           {targetOptions.find((option) => option.id === scan.type)?.icon}
                         </div>
-                        <div className="scan-name">
+                        <div
+                          className="scan-name"
+                          onClick={() => inspectJobSummary(scan)}
+                          style={{ cursor: "pointer" }}
+                          title="Click to view scan details and finding summary"
+                        >
                           <strong>{targetKindLabel(scan.type)}</strong>
                           <span>{scan.target}</span>
                         </div>
@@ -1604,14 +1929,35 @@ export default function Home() {
                   Uses the latest completed or partial Go report for each target.
                 </p>
               </div>
-              <button
-                type="button"
-                className="export-button"
-                onClick={exportReports}
-                disabled={exportableReportCount === 0}
-              >
-                <span aria-hidden="true">⇩</span> Download loaded JSON reports
-              </button>
+              <div className="export-group" role="group" aria-label="Export findings">
+                <button
+                  type="button"
+                  className="export-button"
+                  onClick={() => exportFindingsFormat("xlsx")}
+                  disabled={exportableReportCount === 0}
+                  title="Export findings as Excel (.xlsx)"
+                >
+                  <span aria-hidden="true">⇩</span> Export XLSX
+                </button>
+                <button
+                  type="button"
+                  className="export-button"
+                  onClick={() => exportFindingsFormat("csv")}
+                  disabled={exportableReportCount === 0}
+                  title="Export findings as CSV (.csv)"
+                >
+                  <span aria-hidden="true">⇩</span> Export CSV
+                </button>
+                <button
+                  type="button"
+                  className="export-button"
+                  onClick={() => exportFindingsFormat("json")}
+                  disabled={exportableReportCount === 0}
+                  title="Export findings as JSON (.json)"
+                >
+                  <span aria-hidden="true">⇩</span> Export JSON
+                </button>
+              </div>
             </div>
 
             <div className="report-scope-note" role="note">
@@ -1661,6 +2007,26 @@ export default function Home() {
                   ),
                 )}
               </div>
+              {availableTargets.length > 0 && (
+                <div className="target-filter-shell">
+                  <span>Target:</span>
+                  <select
+                    id="target-filter-select"
+                    value={selectedTargetFilter}
+                    onChange={(event) => {
+                      setSelectedTargetFilter(event.target.value);
+                      setVisibleFindingLimit(FINDING_PAGE_SIZE);
+                    }}
+                  >
+                    <option value="All Targets">All Targets ({availableTargets.length})</option>
+                    {availableTargets.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <label className="verified-toggle">
                 <input
                   type="checkbox"
@@ -1715,12 +2081,8 @@ export default function Home() {
                         <button
                           type="button"
                           className="review-required-button"
-                          aria-label={`Show summary for finding ${finding.id}`}
-                          onClick={() =>
-                            setNotice(
-                              `${finding.description}${finding.remediation ? ` Remediation: ${finding.remediation}` : ""}`,
-                            )
-                          }
+                          aria-label={`Show details for finding ${finding.id}`}
+                          onClick={() => setActiveFindingModal(finding)}
                         >
                           <span aria-hidden="true">!</span>
                           Human review required
@@ -1735,9 +2097,11 @@ export default function Home() {
                 <div className="empty-state">
                   {allFindings.length === 0
                     ? apiState === "online"
-                      ? "No reported findings yet. Results of completed scans will appear here."
+                      ? assessmentScans.length > 0
+                        ? "Selected target scan(s) completed with 0 findings detected (Clean)."
+                        : "No reported findings yet. Results of completed or partial scans will appear here."
                       : "Control service offline; fake findings are not displayed."
-                    : "No findings match these filters."}
+                    : "No findings match the selected target or severity filters."}
                 </div>
               )}
               {filteredFindings.length > displayedFindings.length && (
@@ -1774,6 +2138,7 @@ export default function Home() {
                 type="button"
                 onClick={() => {
                   setSeverityFilter("All");
+                  setSelectedTargetFilter("All Targets");
                   setHighConfidenceOnly(false);
                   setVisibleFindingLimit(FINDING_PAGE_SIZE);
                 }}
@@ -1802,6 +2167,117 @@ export default function Home() {
           ×
         </button>
       </div>
+
+      {activeFindingModal && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="finding-modal-title"
+          onClick={() => setActiveFindingModal(null)}
+        >
+          <div
+            className="modal-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div className="modal-header-meta">
+                <span className={`severity-pill ${activeFindingModal.severityKey}`}>
+                  {activeFindingModal.severity}
+                </span>
+                <span className="modal-rule-id">{activeFindingModal.id}</span>
+                <span className="modal-confidence">
+                  Confidence: {confidenceLabels[activeFindingModal.confidence]}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                aria-label="Close modal"
+                onClick={() => setActiveFindingModal(null)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <h2 id="finding-modal-title">{activeFindingModal.title}</h2>
+              <div className="modal-target-bar">
+                <span className="label">Location / Target:</span>
+                <code>{activeFindingModal.target}</code>
+              </div>
+
+              <div className="modal-section">
+                <h3>Vulnerability Description</h3>
+                <p>{activeFindingModal.description}</p>
+              </div>
+
+              {activeFindingModal.remediation && (
+                <div className="modal-section remediation-box">
+                  <h3>Recommended Remediation</h3>
+                  <p>{activeFindingModal.remediation}</p>
+                </div>
+              )}
+
+              <div className="modal-section">
+                <h3>Classification & Details</h3>
+                <div className="modal-meta-grid">
+                  <div>
+                    <span className="meta-label">Classification</span>
+                    <span>{activeFindingModal.detail}</span>
+                  </div>
+                  <div>
+                    <span className="meta-label">First Detected</span>
+                    <span>{activeFindingModal.age}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="modal-section">
+                <h3>Reference Links & Documentation</h3>
+                <div className="modal-references">
+                  {activeFindingModal.detail.includes("CWE-") && (
+                    <a
+                      href={`https://cwe.mitre.org/data/definitions/${activeFindingModal.detail.match(/CWE-(\d+)/)?.[1] || "798"}.html`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="reference-link"
+                    >
+                      <span>↗</span> MITRE {activeFindingModal.detail.match(/CWE-\d+/)?.[0] || "CWE Definition"}
+                    </a>
+                  )}
+                  <a
+                    href="https://owasp.org/www-project-top-ten/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="reference-link"
+                  >
+                    <span>↗</span> OWASP Top 10 Security Risks
+                  </a>
+                  <a
+                    href="https://cheatsheetseries.owasp.org/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="reference-link"
+                  >
+                    <span>↗</span> OWASP Prevention Cheat Sheets
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="primary-action"
+                onClick={() => setActiveFindingModal(null)}
+              >
+                Close Review
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

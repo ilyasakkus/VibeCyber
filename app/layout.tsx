@@ -48,6 +48,11 @@ export async function generateMetadata(): Promise<Metadata> {
     title,
     description,
     applicationName: "Vibe Cyber V.1.0",
+    icons: {
+      icon: "/favicon.svg",
+      shortcut: "/favicon.svg",
+      apple: "/favicon.svg",
+    },
     openGraph: {
       type: "website",
       locale: "en_US",
