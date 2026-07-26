@@ -1,7 +1,7 @@
 {
-  "name": "webcyber",
-  "version": "0.1.0",
-  "description": "Katmanlı açık kaynak web, kaynak kod, mobil ve masaüstü güvenlik tarayıcısı.",
+  "name": "vibe-cyber",
+  "version": "1.0.0",
+  "description": "Vibe Coders Security Hand Tool",
   "license": "Apache-2.0",
   "private": true,
   "engines": {

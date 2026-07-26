@@ -27,7 +27,7 @@ function controlConfiguration(): ControlConfiguration {
   if (!token) {
     return {
       ok: false,
-      error: "Kontrol hizmeti için sunucu kimlik bilgisi yapılandırılmamış.",
+      error: "Server credentials not configured for control service.",
     };
   }
 
@@ -37,7 +37,7 @@ function controlConfiguration(): ControlConfiguration {
   try {
     const base = new URL(configuredBase);
     if (base.protocol !== "http:" && base.protocol !== "https:") {
-      return { ok: false, error: "Kontrol hizmeti adresi geçersiz." };
+      return { ok: false, error: "Invalid control service address." };
     }
     base.username = "";
     base.password = "";
@@ -46,7 +46,7 @@ function controlConfiguration(): ControlConfiguration {
     base.pathname = base.pathname.replace(/\/+$/, "");
     return { ok: true, base, token };
   } catch {
-    return { ok: false, error: "Kontrol hizmeti adresi geçersiz." };
+    return { ok: false, error: "Invalid control service address." };
   }
 }
 
@@ -54,7 +54,7 @@ async function boundedJSONBody(request: Request) {
   const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
   if (!contentType.startsWith("application/json")) {
     return {
-      error: jsonError(415, "İstek gövdesi application/json olmalı."),
+      error: jsonError(415, "Request body must be application/json."),
     };
   }
 
@@ -63,7 +63,7 @@ async function boundedJSONBody(request: Request) {
     Number.isFinite(declaredLength) &&
     declaredLength > MAX_JSON_BODY_BYTES
   ) {
-    return { error: jsonError(413, "İstek gövdesi izin verilen sınırı aşıyor.") };
+    return { error: jsonError(413, "Request body exceeds allowed size limit.") };
   }
 
   if (!request.body) return { body: new ArrayBuffer(0) };
@@ -79,7 +79,7 @@ async function boundedJSONBody(request: Request) {
     if (totalBytes > MAX_JSON_BODY_BYTES) {
       await reader.cancel().catch(() => undefined);
       return {
-        error: jsonError(413, "İstek gövdesi izin verilen sınırı aşıyor."),
+        error: jsonError(413, "Request body exceeds allowed size limit."),
       };
     }
     chunks.push(value);
@@ -166,8 +166,8 @@ export async function proxyControl(
     return jsonError(
       timedOut ? 504 : 503,
       timedOut
-        ? "Kontrol hizmeti zamanında yanıt vermedi."
-        : "Kontrol hizmetine ulaşılamıyor.",
+        ? "Control service timed out."
+        : "Control service is unreachable.",
     );
   }
 }
@@ -177,5 +177,5 @@ export function validScanID(id: string) {
 }
 
 export function invalidScanID() {
-  return jsonError(400, "Tarama kimliği geçersiz.");
+  return jsonError(400, "Invalid scan ID.");
 }

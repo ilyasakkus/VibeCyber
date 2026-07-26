@@ -13,9 +13,8 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const title = "WebCyber | Güvenlik Operasyon Merkezi";
-const description =
-  "Web, kaynak kod, mobil ve masaüstü uygulamaları için katmanlı açık kaynak güvenlik tarama platformu.";
+const title = "Vibe Cyber V.1.0 | Vibe Coders Security Hand Tool";
+const description = "Vibe Coders Security Hand Tool";
 
 function requestOrigin(requestHeaders: Headers) {
   const directHost = requestHeaders.get("host")?.trim();
@@ -48,11 +47,11 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title,
     description,
-    applicationName: "WebCyber",
+    applicationName: "Vibe Cyber V.1.0",
     openGraph: {
       type: "website",
-      locale: "tr_TR",
-      siteName: "WebCyber",
+      locale: "en_US",
+      siteName: "Vibe Cyber V.1.0",
       title,
       description,
       images: [
@@ -60,7 +59,7 @@ export async function generateMetadata(): Promise<Metadata> {
           url: socialImage,
           width: 1731,
           height: 909,
-          alt: "WebCyber katmanlı güvenlik tarama platformu",
+          alt: "Vibe Cyber V.1.0 - Vibe Coders Security Hand Tool",
         },
       ],
     },
@@ -79,7 +78,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="tr">
+    <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         {children}
       </body>

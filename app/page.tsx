@@ -20,7 +20,7 @@ type JobStatus =
   | "partial"
   | "failed"
   | "cancelled";
-type Severity = "Kritik" | "Yüksek" | "Orta" | "Düşük" | "Bilgi";
+type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
 type ConfidenceLevel = "high" | "medium" | "low" | "unspecified";
 type APIState = "loading" | "online" | "offline";
 
@@ -130,9 +130,9 @@ const targetOptions: Array<{
   icon: string;
 }> = [
   { id: "web", label: "Web / API", eyebrow: "URL", icon: "◎" },
-  { id: "source", label: "Kaynak kod", eyebrow: "SAST + SCA", icon: "〈〉" },
-  { id: "mobile", label: "Mobil uygulama", eyebrow: "APK / IPA", icon: "▣" },
-  { id: "desktop", label: "Masaüstü", eyebrow: "Binary / App", icon: "◈" },
+  { id: "source", label: "Source code", eyebrow: "SAST + SCA", icon: "〈〉" },
+  { id: "mobile", label: "Mobile app", eyebrow: "APK / IPA", icon: "▣" },
+  { id: "desktop", label: "Desktop", eyebrow: "Binary / App", icon: "◈" },
 ];
 
 const targetConfig: Record<
@@ -140,24 +140,24 @@ const targetConfig: Record<
   { label: string; placeholder: string; hint: string }
 > = {
   web: {
-    label: "Hedef adresi",
-    placeholder: "https://uygulama.ornek.com",
-    hint: "Kapsam bu URL ile sınırlanır; yönlendirmeler ve özel ağ hedefleri güvenli biçimde doğrulanır.",
+    label: "Target address",
+    placeholder: "https://app.example.com",
+    hint: "Scope is limited to this URL; redirects and private network targets are validated securely.",
   },
   source: {
-    label: "Depo veya proje yolu",
-    placeholder: "/projeler/api",
-    hint: "Yol, Go kontrol hizmetinin çalıştığı makinede salt okunur analiz edilir.",
+    label: "Repository or project path",
+    placeholder: "/projects/api",
+    hint: "Path is analyzed read-only on the machine running the Go control service.",
   },
   mobile: {
-    label: "Mobil paket yolu",
-    placeholder: "/builds/app-release.apk veya uygulama.ipa",
-    hint: "APK ve IPA paketleri yerel, sınırlı analiz akışında incelenir.",
+    label: "Mobile package path",
+    placeholder: "/builds/app-release.apk or app.ipa",
+    hint: "APK and IPA packages are analyzed in a local, sandboxed workflow.",
   },
   desktop: {
-    label: "Uygulama veya binary yolu",
-    placeholder: "/Applications/Uygulama.app veya uygulama.exe",
-    hint: "Uygulama ya da binary yolu Go tarama motorunun yerel erişim alanında olmalıdır.",
+    label: "App or binary path",
+    placeholder: "/Applications/App.app or app.exe",
+    hint: "App or binary path must be within the local access range of the Go scanner engine.",
   },
 };
 
@@ -169,27 +169,27 @@ const terminalStatuses = new Set<JobStatus>([
 ]);
 
 const severityLabels: Record<ReportFinding["severity"], Severity> = {
-  critical: "Kritik",
-  high: "Yüksek",
-  medium: "Orta",
-  low: "Düşük",
-  info: "Bilgi",
+  critical: "Critical",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+  info: "Info",
 };
 
 const statusLabels: Record<JobStatus, string> = {
-  queued: "Kuyrukta",
-  running: "Taranıyor",
-  cancelling: "İptal tamamlanıyor",
-  completed: "Tamamlandı",
-  partial: "Kısmi tamamlandı",
-  failed: "Başarısız",
-  cancelled: "İptal edildi",
+  queued: "Queued",
+  running: "Scanning",
+  cancelling: "Cancelling",
+  completed: "Completed",
+  partial: "Partial",
+  failed: "Failed",
+  cancelled: "Cancelled",
 };
 
 const secondaryNavItems = [
-  { label: "Entegrasyonlar", icon: "∞" },
-  { label: "Raporlar", icon: "≡" },
-  { label: "Ayarlar", icon: "⚙" },
+  { label: "Integrations", icon: "∞" },
+  { label: "Reports", icon: "≡" },
+  { label: "Settings", icon: "⚙" },
 ];
 
 function isTargetType(value: unknown): value is TargetType {
@@ -253,9 +253,9 @@ async function responseError(response: Response) {
     };
     if (typeof payload.error === "string") return payload.error;
     if (payload.error?.message) return payload.error.message;
-    return payload.message || `İstek başarısız (${response.status}).`;
+    return payload.message || `Request failed (${response.status}).`;
   } catch {
-    return `İstek başarısız (${response.status}).`;
+    return `Request failed (${response.status}).`;
   }
 }
 
@@ -273,33 +273,33 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function targetKindLabel(kind: TargetType) {
-  return targetOptions.find((item) => item.id === kind)?.label ?? "Hedef";
+  return targetOptions.find((item) => item.id === kind)?.label ?? "Target";
 }
 
 function validateTarget(type: TargetType, value: string) {
   const cleanTarget = value.trim();
-  if (!cleanTarget) return { valid: false, error: "Taranacak hedefi girin." };
+  if (!cleanTarget) return { valid: false, error: "Enter a target to scan." };
   if (type !== "web") return { valid: true, error: "" };
 
   try {
     const parsedTarget = new URL(cleanTarget);
     if (parsedTarget.protocol !== "http:" && parsedTarget.protocol !== "https:") {
-      return { valid: false, error: "Web hedefi http:// veya https:// ile başlamalı." };
+      return { valid: false, error: "Web target must start with http:// or https://." };
     }
     if (!parsedTarget.hostname) {
-      return { valid: false, error: "Web hedefinde geçerli bir ana makine adı olmalı." };
+      return { valid: false, error: "Web target must contain a valid hostname." };
     }
     if (parsedTarget.username || parsedTarget.password) {
       return {
         valid: false,
-        error: "URL içinde kullanıcı adı veya parola bilgisi kullanılamaz.",
+        error: "User credentials cannot be included in the URL.",
       };
     }
     return { valid: true, error: "" };
   } catch {
     return {
       valid: false,
-      error: "Geçerli bir web adresi girin (örn. https://uygulama.example).",
+      error: "Enter a valid web URL (e.g., https://app.example.com).",
     };
   }
 }
@@ -309,12 +309,12 @@ function relativeTime(value?: string) {
   const timestamp = new Date(value).getTime();
   if (!Number.isFinite(timestamp)) return "—";
   const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (seconds < 60) return "az önce";
+  if (seconds < 60) return "just now";
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} dk önce`;
+  if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} sa önce`;
-  return `${Math.floor(hours / 24)} gün önce`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 function normalizeConfidence(confidence?: string): ConfidenceLevel {
@@ -331,10 +331,10 @@ function normalizeConfidence(confidence?: string): ConfidenceLevel {
 }
 
 const confidenceLabels: Record<ConfidenceLevel, string> = {
-  high: "Yüksek",
-  medium: "Orta",
-  low: "Düşük",
-  unspecified: "Belirtilmedi",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+  unspecified: "Unspecified",
 };
 
 function newestJobsPerTarget(scans: ScanJob[]) {
@@ -385,11 +385,11 @@ function findingsFromScans(
         key: `${job.id}:${finding.fingerprint || finding.rule_id}:${index}`,
         id: finding.rule_id,
         title: finding.title,
-        detail: classifiers || "Sınıflandırma bilgisi yok",
+        detail: classifiers || "No classification metadata",
         description: finding.description,
         remediation: finding.remediation,
         target: location,
-        severity: severityLabels[finding.severity] ?? "Bilgi",
+        severity: severityLabels[finding.severity] ?? "Info",
         severityKey: finding.severity,
         confidence: normalizeConfidence(finding.confidence),
         age: relativeTime(job.finishedAt || job.report?.scan?.finished_at),
@@ -460,8 +460,8 @@ export default function Home() {
   const [isCancellingAll, setIsCancellingAll] = useState(false);
   const [cancellingIDs, setCancellingIDs] = useState<Set<string>>(new Set());
   const [showAllScans, setShowAllScans] = useState(false);
-  const [severityFilter, setSeverityFilter] = useState<"Tümü" | Severity>(
-    "Tümü",
+  const [severityFilter, setSeverityFilter] = useState<"All" | Severity>(
+    "All",
   );
   const [highConfidenceOnly, setHighConfidenceOnly] = useState(false);
   const [visibleFindingLimit, setVisibleFindingLimit] =
@@ -568,7 +568,7 @@ export default function Home() {
     () =>
       allFindings.filter((finding) => {
         const severityMatches =
-          severityFilter === "Tümü" || finding.severity === severityFilter;
+          severityFilter === "All" || finding.severity === severityFilter;
         const confidenceMatches =
           !highConfidenceOnly || finding.confidence === "high";
         return severityMatches && confidenceMatches;
@@ -722,7 +722,7 @@ export default function Home() {
       setAPIError(
         error instanceof Error
           ? error.message
-          : "Kontrol hizmetine ulaşılamıyor.",
+          : "Control service is unreachable.",
       );
     }
   }, [loadScans]);
@@ -818,7 +818,7 @@ export default function Home() {
 
   function changeTargetType(nextType: TargetType) {
     if (!targetCapabilityEnabled(nextType)) {
-      setNotice("Bu hedef türü kontrol hizmetinin yeteneklerinde etkin değil.");
+      setNotice("This target type is not enabled in control service capabilities.");
       return;
     }
     targetTypeRef.current = nextType;
@@ -844,11 +844,11 @@ export default function Home() {
       return;
     }
     if (!scopeConfirmed) {
-      setNotice("Tarama başlatmak için kapsam yetkisini doğrulayın.");
+      setNotice("Confirm authorization before starting a scan.");
       return;
     }
     if (!targetCapabilityEnabled(targetType)) {
-      setNotice("Bu hedef türü kontrol hizmetinin yeteneklerinde etkin değil.");
+      setNotice("This target type is not enabled in control service capabilities.");
       return;
     }
 
@@ -865,13 +865,13 @@ export default function Home() {
         }),
       });
       const job = extractJob(payload);
-      if (!job) throw new Error("Kontrol hizmeti geçerli bir tarama işi döndürmedi.");
+      if (!job) throw new Error("Control service did not return a valid scan job.");
       updateJob(job);
       setScopeConfirmed(false);
-      setNotice(`${job.id} taraması kuyruğa alındı.`);
+      setNotice(`${job.id} scan queued.`);
     } catch (error) {
       setNotice(
-        error instanceof Error ? error.message : "Tarama başlatılamadı.",
+        error instanceof Error ? error.message : "Failed to start scan.",
       );
     } finally {
       setIsSubmitting(false);
@@ -885,11 +885,11 @@ export default function Home() {
       await fetchJSON<unknown>("/api/control/scans", { method: "DELETE" });
       await loadScans(true);
       setNotice(
-        `${cancellableScans.length} kuyrukta veya çalışan iş için iptal sinyali gönderildi.`,
+        `Cancellation signal sent for ${cancellableScans.length} queued or running jobs.`,
       );
     } catch (error) {
       setNotice(
-        error instanceof Error ? error.message : "İşler iptal edilemedi.",
+        error instanceof Error ? error.message : "Failed to cancel jobs.",
       );
     } finally {
       setIsCancellingAll(false);
@@ -912,9 +912,9 @@ export default function Home() {
       const job = extractJob(payload);
       if (job) updateJob(job);
       else await fetchJob(scan.id);
-      setNotice(`${scan.id} işi için iptal sinyali gönderildi.`);
+      setNotice(`Cancellation signal sent for job ${scan.id}.`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "İş iptal edilemedi.");
+      setNotice(error instanceof Error ? error.message : "Failed to cancel job.");
     } finally {
       setCancellingIDs((current) => {
         const next = new Set(current);
@@ -927,7 +927,7 @@ export default function Home() {
   function exportReports() {
     const reports = scans.flatMap((scan) => (scan.report ? [scan.report] : []));
     if (reports.length === 0) {
-      setNotice("Dışa aktarılabilecek yüklenmiş rapor yok.");
+      setNotice("No loaded reports available for export.");
       return;
     }
     const blob = new Blob([JSON.stringify(reports, null, 2)], {
@@ -936,28 +936,28 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `webcyber-reports-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = `vibe-cyber-reports-${new Date().toISOString().slice(0, 10)}.json`;
     link.click();
     URL.revokeObjectURL(url);
-    setNotice(`${reports.length} yüklenmiş JSON raporu indirildi.`);
+    setNotice(`Downloaded ${reports.length} loaded JSON report(s).`);
   }
 
   const navItems = [
-    { label: "Genel bakış", icon: "▦", badge: "", href: "#overview" },
+    { label: "Overview", icon: "▦", badge: "", href: "#overview" },
     {
-      label: "Taramalar",
+      label: "Scans",
       icon: "◎",
       badge: scans.length ? String(scans.length) : "",
       href: "#scans",
     },
     {
-      label: "Bulgular",
+      label: "Findings",
       icon: "◇",
       badge: aggregateSummary.total ? String(aggregateSummary.total) : "",
       href: "#findings",
     },
-    { label: "Varlıklar", icon: "⌘", badge: "", href: null },
-    { label: "Politikalar", icon: "⊡", badge: "", href: null },
+    { label: "Assets", icon: "⌘", badge: "", href: null },
+    { label: "Policies", icon: "⊡", badge: "", href: null },
   ];
   const displayedScans = showAllScans ? scans : scans.slice(0, 4);
   const scoreStyle = {
@@ -967,7 +967,7 @@ export default function Home() {
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
-        Ana içeriğe geç
+        Skip to main content
       </a>
 
       <aside
@@ -978,16 +978,16 @@ export default function Home() {
       >
         <div className="brand-row">
           <div className="brand-mark" aria-hidden="true">
-            W<span>C</span>
+            V<span>C</span>
           </div>
           <div className="brand-copy">
-            <strong>WebCyber</strong>
-            <span>Security Operations</span>
+            <strong>Vibe Cyber</strong>
+            <span>V.1.0</span>
           </div>
           <button
             className="nav-close"
             type="button"
-            aria-label="Menüyü kapat"
+            aria-label="Close menu"
             ref={navCloseButtonRef}
             onClick={() => closeMobileNav()}
           >
@@ -996,18 +996,18 @@ export default function Home() {
         </div>
 
         <div className="workspace-switcher">
-          <span className="workspace-avatar">WC</span>
+          <span className="workspace-avatar">VC</span>
           <span>
-            <small>Çalışma alanı</small>
-            <strong>Yerel kontrol düzlemi</strong>
+            <small>Workspace</small>
+            <strong>Local control plane</strong>
           </span>
           <span className="workspace-chevron" aria-hidden="true">
             ⌄
           </span>
         </div>
 
-        <nav className="primary-nav" aria-label="Ana menü">
-          <span className="nav-heading">OPERASYON</span>
+        <nav className="primary-nav" aria-label="Main menu">
+          <span className="nav-heading">OPERATIONS</span>
           {navItems.map((item, index) =>
             item.href ? (
               <a
@@ -1034,12 +1034,12 @@ export default function Home() {
                   {item.icon}
                 </span>
                 <span>{item.label}</span>
-                <span className="nav-soon">Yakında</span>
+                <span className="nav-soon">Soon</span>
               </button>
             ),
           )}
 
-          <span className="nav-heading secondary-heading">YÖNETİM</span>
+          <span className="nav-heading secondary-heading">MANAGEMENT</span>
           {secondaryNavItems.map((item) => (
             <button
               className="nav-item nav-item-disabled"
@@ -1051,7 +1051,7 @@ export default function Home() {
                 {item.icon}
               </span>
               <span>{item.label}</span>
-              <span className="nav-soon">Yakında</span>
+              <span className="nav-soon">Soon</span>
             </button>
           ))}
         </nav>
@@ -1059,29 +1059,29 @@ export default function Home() {
         <div className="agent-mini-card">
           <div className="agent-mini-head">
             <span className={`status-dot ${apiState === "online" ? "online" : ""}`} />
-            <strong>Go tarama motoru</strong>
+            <strong>Go scanner engine</strong>
           </div>
           <p>
             {apiState === "online"
-              ? `v${health?.version || "—"} · ${localPathsEnabled ? "Yerel yollar açık" : "Yalnız web hedefleri"}`
+              ? `v${health?.version || "—"} · ${localPathsEnabled ? "Local paths enabled" : "Web targets only"}`
               : apiState === "loading"
-                ? "Bağlantı kontrol ediliyor"
-                : "Kontrol hizmeti çevrimdışı"}
+                ? "Checking connection..."
+                : "Control service offline"}
           </p>
           <button
             type="button"
             onClick={() => void connectControlPlane()}
             disabled={apiState === "loading"}
           >
-            {apiState === "loading" ? "Kontrol ediliyor…" : "Bağlantıyı yenile"}
+            {apiState === "loading" ? "Checking…" : "Refresh connection"}
           </button>
         </div>
 
         <div className="sidebar-footer">
-          <span className="user-avatar">WC</span>
+          <span className="user-avatar">VC</span>
           <span>
-            <strong>Community Edition</strong>
-            <small>Yerel ve açık kaynak</small>
+            <strong>Vibe Cyber V.1.0</strong>
+            <small>Vibe Coders Security Hand Tool</small>
           </span>
         </div>
       </aside>
@@ -1090,7 +1090,7 @@ export default function Home() {
         <button
           className="nav-backdrop"
           type="button"
-          aria-label="Menüyü kapat"
+          aria-label="Close menu"
           onClick={() => closeMobileNav()}
         />
       )}
@@ -1101,7 +1101,7 @@ export default function Home() {
             <button
               className="mobile-menu-button"
               type="button"
-              aria-label="Menüyü aç"
+              aria-label="Open menu"
               aria-expanded={mobileNavOpen}
               aria-controls="mobile-navigation"
               ref={mobileMenuButtonRef}
@@ -1110,9 +1110,9 @@ export default function Home() {
               ☰
             </button>
             <div className="breadcrumb">
-              <span>Operasyon merkezi</span>
+              <span>Operations Center</span>
               <b>/</b>
-              <strong>Genel bakış</strong>
+              <strong>Overview</strong>
             </div>
           </div>
           <div className="topbar-actions">
@@ -1122,10 +1122,10 @@ export default function Home() {
             >
               <span />{" "}
               {apiState === "online"
-                ? "Go motoru bağlı"
+                ? "Go engine connected"
                 : apiState === "loading"
-                  ? "Bağlanıyor"
-                  : "Motor çevrimdışı"}
+                  ? "Connecting"
+                  : "Engine offline"}
             </div>
           </div>
         </header>
@@ -1137,25 +1137,25 @@ export default function Home() {
           >
             <span className="demo-banner-label">
               {apiState === "online"
-                ? "CANLI"
+                ? "LIVE"
                 : apiState === "loading"
-                  ? "BAĞLAN"
+                  ? "CONNECT"
                   : "OFFLINE"}
             </span>
             <p>
               <strong>
                 {apiState === "online"
-                  ? "Gerçek Go kontrol düzlemi bağlı"
+                  ? "Real Go control plane connected"
                   : apiState === "loading"
-                    ? "Kontrol hizmetine bağlanılıyor"
-                    : "Tarama motoruna ulaşılamıyor"}
+                    ? "Connecting to control service"
+                    : "Scanner engine unreachable"}
               </strong>
               <span>
                 {apiState === "online"
-                  ? `${health?.capabilities.maxConcurrency ?? 0} eşzamanlı iş · sonuçlar gerçek tarama raporlarından üretiliyor.`
+                  ? `${health?.capabilities.maxConcurrency ?? 0} concurrent jobs · results generated from live scan reports.`
                   : apiState === "loading"
-                    ? "Sağlık ve yetenek bilgileri okunuyor."
-                    : `${apiError || "Go kontrol hizmetini başlatıp bağlantıyı yenileyin."} Sahte veri gösterilmiyor.`}
+                    ? "Reading health and capability specs."
+                    : `${apiError || "Launch Go control service and refresh connection."} Fake data is not displayed.`}
               </span>
             </p>
             {apiState === "offline" && (
@@ -1164,7 +1164,7 @@ export default function Home() {
                 type="button"
                 onClick={() => void connectControlPlane()}
               >
-                Yeniden dene
+                Retry
               </button>
             )}
           </div>
@@ -1180,13 +1180,13 @@ export default function Home() {
               <p>
                 <strong>
                   {isCancellingAll
-                    ? "İptal sinyali gönderiliyor"
+                    ? "Sending cancellation signal"
                     : cancellingScanCount > 0
-                      ? `${cancellingScanCount} iş iptali tamamlıyor`
-                      : "Güvenlik sınırları etkin"}
+                      ? `${cancellingScanCount} job(s) completing cancellation`
+                      : "Security boundaries active"}
                 </strong>
                 <span>
-                  Observe ve Safe profilleri · Yetki onayı zorunlu · {activeScans.length} etkin iş
+                  Observe & Safe profiles · Authorization required · {activeScans.length} active job(s)
                 </span>
               </p>
             </div>
@@ -1201,41 +1201,41 @@ export default function Home() {
             >
               <span aria-hidden="true">■</span>
               {isCancellingAll
-                ? "İptal ediliyor…"
+                ? "Cancelling…"
                 : cancellingScanCount > 0 && cancellableScans.length === 0
-                  ? "İptal tamamlanıyor…"
-                  : "Tüm etkin işleri iptal et"}
+                  ? "Completing cancellation…"
+                  : "Cancel all active jobs"}
             </button>
           </div>
 
           <section className="page-heading" id="overview">
             <div>
-              <span className="eyebrow">CANLI KONTROL DÜZLEMİ</span>
-              <h1>Güvenlik operasyon merkezi</h1>
-              <p>Web, kaynak kod, mobil ve masaüstü hedeflerini tek kuyruktan yönetin.</p>
+              <span className="eyebrow">LIVE CONTROL PLANE</span>
+              <h1>Vibe Cyber V.1.0</h1>
+              <p>Vibe Coders Security Hand Tool</p>
             </div>
             <a className="primary-action" href="#new-scan">
-              <span aria-hidden="true">+</span> Yeni tarama
+              <span aria-hidden="true">+</span> New scan
             </a>
           </section>
 
-          <section className="overview-grid" aria-label="Güvenlik özeti">
+          <section className="overview-grid" aria-label="Security summary">
             <article className="score-card panel">
               <div className="card-heading">
                 <div>
-                  <span className="section-kicker">GENEL DURUM</span>
-                  <h2>Son raporların teknik risk endeksi</h2>
+                  <span className="section-kicker">OVERALL STATUS</span>
+                  <h2>Technical risk index of recent reports</h2>
                 </div>
                 <button
                   className="text-button"
                   type="button"
                   onClick={() =>
                     setNotice(
-                      "Endeks, her hedefin en yeni tamamlanmış veya kısmi raporundaki şiddet ağırlıklarından türetilir. 0 daha düşük, 100 daha yüksek gözlenen teknik risk yükünü gösterir; güvenlik garantisi değildir.",
+                      "Index is derived from severity weights of each target's latest completed or partial report. 0 indicates lower, 100 indicates higher observed technical risk load; not a security guarantee.",
                     )
                   }
                 >
-                  Nasıl hesaplanır?
+                  How is it calculated?
                 </button>
               </div>
 
@@ -1245,8 +1245,8 @@ export default function Home() {
                   style={scoreStyle}
                   aria-label={
                     technicalRiskIndex === null
-                      ? "Henüz teknik risk endeksi hesaplanmadı"
-                      : `Teknik risk endeksi 100 üzerinden ${technicalRiskIndex}`
+                      ? "Technical risk index not yet calculated"
+                      : `Technical risk index ${technicalRiskIndex} out of 100`
                   }
                 >
                   <div>
@@ -1256,22 +1256,22 @@ export default function Home() {
                 </div>
                 <div className="score-summary">
                   <div className="score-grade">
-                    <span className="grade-pill risk">RİSK</span>
+                    <span className="grade-pill risk">RISK</span>
                     <p>
                       <strong>
                         {technicalRiskIndex === null
-                          ? "Rapor bekleniyor"
-                          : "Şiddet ağırlıklı teknik gösterge"}
+                          ? "Awaiting report"
+                          : "Severity-weighted technical metric"}
                       </strong>
                       <span>
-                        {assessmentScans.length} hedefin en yeni raporu işlendi
+                        {assessmentScans.length} target report(s) processed
                       </span>
                     </p>
                   </div>
                   <p className="score-note">
                     {technicalRiskIndex === null
-                      ? "İlk tamamlanmış veya kısmi rapor geldiğinde endeks hesaplanır."
-                      : `${aggregateSummary.critical} kritik, ${aggregateSummary.high} yüksek şiddetli bulgu. Bu endeks güvenlik garantisi değildir.`}
+                      ? "Index is calculated when the first completed or partial report arrives."
+                      : `${aggregateSummary.critical} critical, ${aggregateSummary.high} high severity findings. This index is not a security guarantee.`}
                   </p>
                   <div className="score-bar" aria-hidden="true">
                     <span
@@ -1280,8 +1280,8 @@ export default function Home() {
                     />
                   </div>
                   <div className="score-meta">
-                    <span>{aggregateSummary.total} son rapor bulgusu</span>
-                    <span>{assessmentScans.length} benzersiz hedef</span>
+                    <span>{aggregateSummary.total} recent report findings</span>
+                    <span>{assessmentScans.length} unique targets</span>
                   </div>
                 </div>
               </div>
@@ -1291,37 +1291,36 @@ export default function Home() {
               <article className="metric-card panel">
                 <div className="metric-icon critical" aria-hidden="true">!</div>
                 <div>
-                  <span>Kritik bulgu</span>
+                  <span>Critical findings</span>
                   <strong>{aggregateSummary.critical}</strong>
-                  <small>En yeni hedef raporları</small>
+                  <small>Latest target reports</small>
                 </div>
               </article>
               <article className="metric-card panel">
                 <div className="metric-icon high" aria-hidden="true">↑</div>
                 <div>
-                  <span>Yüksek risk</span>
+                  <span>High risk</span>
                   <strong>{aggregateSummary.high}</strong>
-                  <small>En yeni hedef raporları</small>
+                  <small>Latest target reports</small>
                 </div>
               </article>
               <article className="metric-card panel">
                 <div className="metric-icon verified" aria-hidden="true">✓</div>
                 <div>
-                  <span>Değerlendirilen hedef</span>
+                  <span>Evaluated targets</span>
                   <strong>{assessmentScans.length}</strong>
                   <small>
-                    {completedReportCount} tamamlandı · {partialReportCount} kısmi
+                    {completedReportCount} completed · {partialReportCount} partial
                   </small>
                 </div>
               </article>
               <article className="metric-card panel">
                 <div className="metric-icon coverage" aria-hidden="true">◎</div>
                 <div>
-                  <span>Rapor kapsamı</span>
+                  <span>Report coverage</span>
                   <strong>{reportCoverage === null ? "—" : `%${reportCoverage}`}</strong>
                   <small>
-                    {assessmentScans.length} / {assessmentCandidates.length} seçili hedef
-                    raporu yüklendi
+                    {assessmentScans.length} / {assessmentCandidates.length} selected target reports loaded
                   </small>
                 </div>
               </article>
@@ -1332,9 +1331,9 @@ export default function Home() {
             <article className="new-scan-card panel" id="new-scan">
               <div className="card-heading scan-heading">
                 <div>
-                  <span className="section-kicker">ORKESTRATÖR</span>
-                  <h2>Yeni tarama oluştur</h2>
-                  <p>Hedef, profil ve açık yetki beyanıyla gerçek bir tarama işi başlatın.</p>
+                  <span className="section-kicker">ORCHESTRATOR</span>
+                  <h2>Create new scan</h2>
+                  <p>Launch a real scan job with target, profile, and explicit authorization declaration.</p>
                 </div>
                 <span className="safe-badge">
                   <span /> Observe / Safe
@@ -1342,7 +1341,7 @@ export default function Home() {
               </div>
 
               <form onSubmit={submitScan} noValidate>
-                <div className="target-tabs" role="group" aria-label="Hedef türü">
+                <div className="target-tabs" role="group" aria-label="Target type">
                   {targetOptions.map((option) => {
                     const disabled = !targetCapabilityEnabled(option.id);
                     return (
@@ -1360,14 +1359,14 @@ export default function Home() {
                         </span>
                         <span>
                           <strong>{option.label}</strong>
-                          <small>{disabled ? "Yerel erişim kapalı" : option.eyebrow}</small>
+                          <small>{disabled ? "Local path disabled" : option.eyebrow}</small>
                         </span>
                       </button>
                     );
                   })}
                 </div>
                 <p className="sr-only" id="local-capability-help">
-                  Bu hedef türü için Go kontrol hizmetinde yerel yol erişimi etkin olmalıdır.
+                  Local path access must be enabled in the Go control service for this target type.
                 </p>
 
                 <div className="field-group">
@@ -1395,10 +1394,10 @@ export default function Home() {
                     />
                     <span className={`input-status ${showTargetError ? "invalid" : ""}`}>
                       {showTargetError
-                        ? "Geçersiz"
+                        ? "Invalid"
                         : targetValidation.valid
-                          ? "Biçim geçerli"
-                          : "Hedef bekleniyor"}
+                          ? "Format valid"
+                          : "Awaiting target"}
                     </span>
                   </div>
                   <p
@@ -1416,16 +1415,16 @@ export default function Home() {
                   <div className="agent-requirement connected">
                     <span className="agent-requirement-icon" aria-hidden="true">✓</span>
                     <div>
-                      <strong>Yerel yol taraması etkin</strong>
+                      <strong>Local path scanning enabled</strong>
                       <p>
-                        Hedef, Go kontrol hizmetinin çalıştığı makinede ve süreç izinleriyle okunur.
+                        Target is analyzed read-only on the machine running the Go control service using process permissions.
                       </p>
                     </div>
                   </div>
                 )}
 
                 <fieldset className="profile-fieldset">
-                  <legend>Tarama profili</legend>
+                  <legend>Scan profile</legend>
                   <div className="profile-grid">
                     <button
                       className={`profile-card ${profile === "observe" ? "selected" : ""}`}
@@ -1439,9 +1438,9 @@ export default function Home() {
                       <span className="profile-radio" />
                       <span>
                         <strong>Observe</strong>
-                        <small>Pasif keşif</small>
+                        <small>Passive discovery</small>
                       </span>
-                      <em>Salt okunur</em>
+                      <em>Read-only</em>
                     </button>
                     <button
                       className={`profile-card ${profile === "safe" ? "selected" : ""}`}
@@ -1455,9 +1454,9 @@ export default function Home() {
                       <span className="profile-radio" />
                       <span>
                         <strong>Safe</strong>
-                        <small>Güvenli gözlem / statik analiz</small>
+                        <small>Safe observation / static analysis</small>
                       </span>
-                      <em>Önerilen</em>
+                      <em>Recommended</em>
                     </button>
                     <button
                       className="profile-card locked"
@@ -1469,9 +1468,9 @@ export default function Home() {
                       <span className="profile-lock" aria-hidden="true">⌑</span>
                       <span>
                         <strong>Active</strong>
-                        <small>Doğrulama testleri</small>
+                        <small>Verification tests</small>
                       </span>
-                      <em>Kilitli</em>
+                      <em>Locked</em>
                     </button>
                   </div>
                   <p
@@ -1479,7 +1478,7 @@ export default function Home() {
                     id="active-profile-help"
                   >
                     <span aria-hidden="true">!</span>
-                    Active profil bu sürümde sunulmuyor. Yalnız Observe ve Safe işleri kabul edilir.
+                    Active profile is not available in this build. Only Observe and Safe jobs are accepted.
                   </p>
                 </fieldset>
 
@@ -1493,8 +1492,8 @@ export default function Home() {
                     />
                     <span aria-hidden="true" />
                     <span>
-                      <strong>Bu hedefi test etmeye yetkim var</strong>
-                      <small>Bu beyan hedef her değiştiğinde sıfırlanır ve API isteğine eklenir.</small>
+                      <strong>I am authorized to test this target</strong>
+                      <small>This declaration resets whenever target changes and is sent with the API request.</small>
                     </span>
                   </label>
                   <button
@@ -1503,7 +1502,7 @@ export default function Home() {
                     disabled={!scanCanStart}
                   >
                     <span aria-hidden="true">▷</span>
-                    {isSubmitting ? "Kuyruğa alınıyor…" : "Taramayı başlat"}
+                    {isSubmitting ? "Queueing…" : "Start scan"}
                   </button>
                 </div>
               </form>
@@ -1512,11 +1511,11 @@ export default function Home() {
             <article className="running-card panel" id="scans">
               <div className="card-heading">
                 <div>
-                  <span className="section-kicker">GERÇEK İŞ KUYRUĞU</span>
-                  <h2>Tarama işleri</h2>
+                  <span className="section-kicker">LIVE JOB QUEUE</span>
+                  <h2>Scan jobs</h2>
                 </div>
                 <span className="live-indicator">
-                  <span /> {activeScans.length} etkin
+                  <span /> {activeScans.length} active
                 </span>
               </div>
 
@@ -1542,12 +1541,12 @@ export default function Home() {
                           type="button"
                           aria-label={
                             canCancel
-                              ? `${scan.id} işini iptal et`
+                              ? `Cancel job ${scan.id}`
                               : `${scan.id}: ${statusLabels[scan.status]}`
                           }
                           title={
                             canCancel
-                              ? "İşi iptal et"
+                              ? "Cancel job"
                               : statusLabels[scan.status]
                           }
                           onClick={() => void cancelScan(scan)}
@@ -1576,8 +1575,8 @@ export default function Home() {
                 {scans.length === 0 && (
                   <div className="empty-state compact">
                     {apiState === "online"
-                      ? "Henüz tarama işi yok. İlk hedefi yukarıdan kuyruğa alın."
-                      : "Kontrol hizmeti bağlı olmadığından iş kuyruğu gösterilemiyor."}
+                      ? "No scan jobs yet. Queue your first target above."
+                      : "Job queue unavailable because control service is disconnected."}
                   </div>
                 )}
               </div>
@@ -1589,7 +1588,7 @@ export default function Home() {
                   aria-expanded={showAllScans}
                   onClick={() => setShowAllScans((current) => !current)}
                 >
-                  {showAllScans ? "Son dört işi göster" : `Tüm ${scans.length} işi göster`}
+                  {showAllScans ? "Show last four jobs" : `Show all ${scans.length} jobs`}
                   <span aria-hidden="true">{showAllScans ? "↑" : "↓"}</span>
                 </button>
               )}
@@ -1599,10 +1598,10 @@ export default function Home() {
           <section className="findings-card panel" id="findings">
             <div className="findings-header">
               <div>
-                <span className="section-kicker">RİSK GÖRÜNÜMÜ</span>
-                <h2>Rapor bulguları</h2>
+                <span className="section-kicker">RISK VIEW</span>
+                <h2>Report findings</h2>
                 <p>
-                  Her hedefin en yeni tamamlanmış veya kısmi Go raporu kullanılır.
+                  Uses the latest completed or partial Go report for each target.
                 </p>
               </div>
               <button
@@ -1611,35 +1610,34 @@ export default function Home() {
                 onClick={exportReports}
                 disabled={exportableReportCount === 0}
               >
-                <span aria-hidden="true">⇩</span> Yüklenmiş JSON raporlarını indir
+                <span aria-hidden="true">⇩</span> Download loaded JSON reports
               </button>
             </div>
 
             <div className="report-scope-note" role="note">
               <span aria-hidden="true">!</span>
               <p>
-                <strong>Rapor ve görünüm sınırları</strong>
+                <strong>Report and view limits</strong>
                 <span>
-                  En fazla {REPORT_HYDRATION_LIMIT} benzersiz hedefin en güncel
-                  tamamlanmış veya kısmi raporu yüklenir; bulgu görünümü hedef +
-                  fingerprint ile tekilleştirilerek en fazla{" "}
-                  {FINDING_CACHE_LIMIT} satır tutar ve {FINDING_PAGE_SIZE} satırlık
-                  sayfalar gösterir.
+                  Loads up to {REPORT_HYDRATION_LIMIT} unique targets' latest
+                  completed or partial reports; findings view deduplicates by target +
+                  fingerprint keeping at most {FINDING_CACHE_LIMIT} rows and shows{" "}
+                  {FINDING_PAGE_SIZE}-row pages.
                   {partialReportCount > 0 &&
-                    ` ${partialReportCount} kısmi rapor eksik kapsam içerebilir; rapor sınırlamalarını inceleyin.`}
+                    ` ${partialReportCount} partial report(s) may omit full scope; inspect report limitations.`}
                   {missingAssessmentReportCount > 0 &&
-                    ` Seçili ${missingAssessmentReportCount} raporun ayrıntısı yüklenemedi; endeks ve bulgulara dahil edilmedi.`}
+                    ` Details for ${missingAssessmentReportCount} selected report(s) could not be loaded; omitted from index and findings.`}
                   {omittedAssessmentTargetCount > 0 &&
-                    ` Daha eski ${omittedAssessmentTargetCount} benzersiz hedef raporu kaynak sınırı nedeniyle bu görünüme alınmadı.`}
+                    ` ${omittedAssessmentTargetCount} older unique target report(s) omitted due to resource limits.`}
                   {findingsTruncated &&
-                    " Toplamlarla görüntülenen satırlar tekilleştirme veya satır sınırı nedeniyle farklı olabilir."}
+                    " Displayed rows may differ from totals due to deduplication or row limits."}
                 </span>
               </p>
             </div>
 
             <div className="findings-toolbar">
-              <div className="filter-tabs" aria-label="Şiddete göre filtrele">
-                {(["Tümü", "Kritik", "Yüksek", "Orta", "Düşük", "Bilgi"] as const).map(
+              <div className="filter-tabs" aria-label="Filter by severity">
+                {(["All", "Critical", "High", "Medium", "Low", "Info"] as const).map(
                   (filter) => (
                     <button
                       type="button"
@@ -1652,7 +1650,7 @@ export default function Home() {
                       }}
                     >
                       {filter}
-                      {filter === "Tümü" && (
+                      {filter === "All" && (
                         <span>
                           {findingsTruncated
                             ? `${allFindings.length}+`
@@ -1673,7 +1671,7 @@ export default function Home() {
                   }}
                 />
                 <span aria-hidden="true" />
-                Yalnız yüksek güven
+                High confidence only
               </label>
             </div>
 
@@ -1681,12 +1679,12 @@ export default function Home() {
               <table>
                 <thead>
                   <tr>
-                    <th scope="col">Bulgu</th>
-                    <th scope="col">Hedef</th>
-                    <th scope="col">Şiddet</th>
-                    <th scope="col">Güven</th>
-                    <th scope="col">Bulundu</th>
-                    <th scope="col">İnceleme</th>
+                    <th scope="col">Finding</th>
+                    <th scope="col">Target</th>
+                    <th scope="col">Severity</th>
+                    <th scope="col">Confidence</th>
+                    <th scope="col">Found</th>
+                    <th scope="col">Review</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1717,15 +1715,15 @@ export default function Home() {
                         <button
                           type="button"
                           className="review-required-button"
-                          aria-label={`${finding.id} bulgusunun özetini göster`}
+                          aria-label={`Show summary for finding ${finding.id}`}
                           onClick={() =>
                             setNotice(
-                              `${finding.description}${finding.remediation ? ` Çözüm: ${finding.remediation}` : ""}`,
+                              `${finding.description}${finding.remediation ? ` Remediation: ${finding.remediation}` : ""}`,
                             )
                           }
                         >
                           <span aria-hidden="true">!</span>
-                          İnsan incelemesi gerekli
+                          Human review required
                           <b aria-hidden="true">→</b>
                         </button>
                       </td>
@@ -1737,9 +1735,9 @@ export default function Home() {
                 <div className="empty-state">
                   {allFindings.length === 0
                     ? apiState === "online"
-                      ? "Henüz raporlanmış bulgu yok. Tamamlanan taramaların sonuçları burada görünecek."
-                      : "Kontrol hizmeti çevrimdışı; sahte bulgu gösterilmiyor."
-                    : "Bu filtrelerle eşleşen bulgu yok."}
+                      ? "No reported findings yet. Results of completed scans will appear here."
+                      : "Control service offline; fake findings are not displayed."
+                    : "No findings match these filters."}
                 </div>
               )}
               {filteredFindings.length > displayedFindings.length && (
@@ -1755,12 +1753,12 @@ export default function Home() {
                     )
                   }
                 >
-                  Sonraki{" "}
+                  Show next{" "}
                   {Math.min(
                     FINDING_PAGE_SIZE,
                     filteredFindings.length - displayedFindings.length,
                   )}{" "}
-                  bulguyu göster
+                  findings
                   <span aria-hidden="true">↓</span>
                 </button>
               )}
@@ -1769,25 +1767,25 @@ export default function Home() {
             <div className="findings-footer">
               <p>
                 <span aria-hidden="true">◉</span>
-                {assessmentScans.length} en yeni hedef raporu ·{" "}
-                {aggregateSummary.total} toplam bulgu · {allFindings.length} satır
+                {assessmentScans.length} latest target reports ·{" "}
+                {aggregateSummary.total} total findings · {allFindings.length} rows
               </p>
               <button
                 type="button"
                 onClick={() => {
-                  setSeverityFilter("Tümü");
+                  setSeverityFilter("All");
                   setHighConfidenceOnly(false);
                   setVisibleFindingLimit(FINDING_PAGE_SIZE);
                 }}
               >
-                Filtreleri temizle <span aria-hidden="true">→</span>
+                Clear filters <span aria-hidden="true">→</span>
               </button>
             </div>
           </section>
 
           <footer className="product-footer">
-            <span>WebCyber Community Edition · v{health?.version || "0.1.0-alpha"}</span>
-            <span>Açık kaynak · Apache-2.0 · Verileriniz sizde kalır</span>
+            <span>Vibe Cyber V.1.0 · Vibe Coders Security Hand Tool</span>
+            <span>Open Source · Apache-2.0 · Your data stays with you</span>
           </footer>
         </main>
       </div>
@@ -1800,7 +1798,7 @@ export default function Home() {
       >
         <span aria-hidden="true">✓</span>
         <p>{notice}</p>
-        <button type="button" aria-label="Bildirimi kapat" onClick={() => setNotice("")}>
+        <button type="button" aria-label="Close notification" onClick={() => setNotice("")}>
           ×
         </button>
       </div>
