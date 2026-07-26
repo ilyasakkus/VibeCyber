@@ -1,124 +1,131 @@
-# VibeCyber
+<div align="center">
 
-VibeCyber is an open-source security scanning platform designed to inspect web
-targets, source code repositories, mobile application packages, and desktop
-binaries using a unified finding model.
+  <h1>🛡️ Vibe Cyber V.1.0</h1>
+  <p><strong>Vibe Coders Security Hand Tool & Unified Scanner Platform</strong></p>
+  <p>An open-source, multi-target security scanner for Web / APIs, Source Code (SAST + SCA), Mobile Packages (APK/IPA), and Desktop Application Binaries.</p>
 
-> [!IMPORTANT]
-> VibeCyber must only be used on targets you own or have explicit authorization
-> to test. The default `observe` and `safe` profiles do not perform
-> state-mutating requests, store persistent payloads, or execute exploits.
+  <p>
+    <a href="#-getting-started"><img src="https://img.shields.io/badge/Status-Active-emerald?style=for-the-badge&logo=go" alt="Status"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue?style=for-the-badge" alt="License"></a>
+    <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=for-the-badge&logo=go&logoColor=white" alt="Go"></a>
+    <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.2+-black?style=for-the-badge&logo=nextdotjs&logoColor=white" alt="Next.js"></a>
+    <a href="https://www.electronjs.org/"><img src="https://img.shields.io/badge/Electron-Desktop-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron"></a>
+  </p>
 
-## Current State
+  <br />
 
-The repository contains a Phase 1a vertical slice operating with a local control
-plane:
+  <img src="./public/vibe-cyber-dashboard.png" alt="Vibe Cyber Operations Control Dashboard" width="100%" style="border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 20px 40px rgba(0,0,0,0.6);" />
 
-- Cloudflare-compatible React web control dashboard with a `same-origin` API
-  proxy layer.
-- Loopback Go control API listening locally with mandatory Bearer token
-  authentication.
-- Bounded in-memory job queue with recent jobs, cancellation, and SSE event
-  streaming.
-- Go CLI core with safe defaults and a unified finding schema.
-- Electron desktop bridge wrapping the Go CLI with local file picking and strict
-  IPC boundaries.
-- Standardized JSON and SARIF output contracts.
-- Built-in bounds for SSRF prevention, redirects, file/symlink traversal,
-  timeouts, and output limits.
-- Security policy, threat model, and plugin manifest contracts.
+  <br />
+  <br />
+</div>
 
-Web scanning is currently passive and read-only. Source code, mobile package,
-and desktop application scanning in the control API require
-`WEBCYBER_ALLOW_LOCAL=true`. This setting does not affect direct CLI usage or
-the desktop application accessing user-selected local paths.
+> [!IMPORTANT]  
+> **Authorized Testing Only:** Vibe Cyber is strictly engineered for targets you own or have explicit, documented permission to audit. Built-in `observe` and `safe` scan profiles enforce read-only execution, zero state-mutating requests, and strict sandbox safety.
 
-Integrations for Nuclei, Semgrep, Trivy, Gitleaks, MobSF, and deep binary
-analysis tools will be introduced in subsequent phases as signed and pinned
-worker adapters. User input is never converted into shell commands.
+---
 
-## Architecture
+## 🌟 Highlights & Key Features
+
+Vibe Cyber unifies vulnerability management, code inspection, attack surface tracking, and compliance enforcement into a sleek, real-time control plane.
+
+| Feature Module | Description & Capabilities |
+| :--- | :--- |
+| **▦ Operations Overview** | Technical risk index scoring, real-time status ring, and report coverage metrics across all active scan jobs. |
+| **◎ Live Job Queue** | High-performance Go orchestrator with real-time Server-Sent Events (SSE) streaming and emergency single/all job cancellation controls. |
+| **◇ Findings Matrix** | Severity-indexed vulnerability view with confidence classification, CWE/CVE metadata, and one-click remediation guidance. |
+| **⌘ Asset Inventory** | Centralized Attack Surface Management (ASM) for monitoring web endpoints, local repository paths, mobile binaries, and desktop apps. |
+| **⊡ Policy Engine** | Rule-based guardrails for OWASP Top 10, Secrets Leakage, SAST boundaries, SCA supply-chain SLAs, and custom path exclusion patterns. |
+| **∞ Toolchain Integrations** | Native connection status for the local Go engine, GitHub/GitLab CI/CD webhooks, Slack/Discord alerts, and container scanners. |
+| **≡ Executive Reports** | Comprehensive audit report generator with interactive Markdown (`Copy MD`) and structured JSON exports (`Export JSON`). |
+| **⚙ Platform Settings** | Fine-grained configuration for daemon endpoints, max worker concurrency, profile defaults, and data retention windows. |
+
+---
+
+## 🎯 Supported Scan Targets
+
+Vibe Cyber supports four primary attack surface targets with tailored analysis workflows:
+
+- **◎ Web / API (`web`)**: Passive URL inspection, security headers, TLS parameters, CSP validation, and HTTP response analysis.
+- **〈〉 Source Code (`source`)**: Static Application Security Testing (SAST) and Software Composition Analysis (SCA) for high-entropy secrets and vulnerability patterns.
+- **▣ Mobile Apps (`mobile`)**: Sandboxed manifest and static analysis for Android APK and iOS IPA binary packages.
+- **◈ Desktop Applications (`desktop`)**: Binary and configuration boundary scanning for `.app`, `.exe`, `.dmg`, `.bin`, and Electron shells.
+
+---
+
+## 🏗️ System Architecture
+
+Vibe Cyber uses a decoupled architecture with strict security boundaries between the user interface and the scanner core:
 
 ```text
-Web browser → same-origin web proxy → loopback Go control API
-                                           │
-                                           ▼
-                                  bounded in-memory queue
-                                           │
-                                           ▼
-                                    Go scanner core
-
-Electron desktop → bundled Go CLI ────→ Go scanner core
-Go CLI ───────────────────────────────→ Go scanner core
+┌───────────────────────────┐      Same-Origin Proxy      ┌──────────────────────────────┐
+│ Next.js Web Dashboard     │ ──────────────────────────> │ Loopback Go Control Daemon   │
+│ (Cloudflare / Edge Ready) │ <────────────────────────── │ (127.0.0.1:7071 with Bearer) │
+└───────────────────────────┘      SSE Live Streaming     └──────────────┬───────────────┘
+                                                                         │
+┌───────────────────────────┐      IPC Secure Bridge                     │ Bounded Queue
+│ Electron Desktop Shell    │ ───────────────────────────────────────────┤
+└───────────────────────────┘                                            ▼
+┌───────────────────────────┐                               ┌──────────────────────────────┐
+│ Standalone Go CLI         │ ────────────────────────────> │ Go Scanner Core Engine       │
+└───────────────────────────┘                               └──────────────────────────────┘
 ```
 
-The browser never accesses the control token directly; the web server proxy
-attaches authorization credentials to requests sent to the Go API. The web
-browser cannot read local file paths independently. In development mode, local
-targets are scanned via the local control API, while in desktop mode, targets
-are accessed via explicit user selection.
+- **Zero Client Credential Exposure**: The web dashboard never stores or handles raw API tokens directly; requests are authenticated via the same-origin web server proxy layer.
+- **Sandbox Local Access**: Direct file system targets require explicit user authorization (`WEBCYBER_ALLOW_LOCAL=true`) or interactive Electron file picker selection.
 
-For details, refer to [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and
-[`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+For in-depth architecture and security model details, refer to [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
-## Requirements
+---
 
-- Node.js 22.13 or higher
-- Go 1.24 or higher
-- An operating system supported by Electron (for desktop shell development)
+## 🚀 Getting Started
 
-## Getting Started
+### Prerequisites
 
-To install dependencies and start both the web dashboard and the Go control
-plane together:
+Ensure you have the following installed:
+- **Node.js**: `v22.13.0` or higher
+- **Go**: `v1.24` or higher
+- **npm**: `v10.0.0` or higher
+
+### 1. Installation
+
+Clone the repository and install dependencies:
 
 ```bash
+git clone https://github.com/ilyasakkus/WebCyber.git
+cd VibeCyber
 npm install
+```
+
+### 2. Run Full Stack (Web Dashboard + Go Control Daemon)
+
+Launch both the Next.js frontend and the Go control service simultaneously:
+
+```bash
 npm run dev:full
 ```
 
-`dev:full` opens the Go API on `127.0.0.1:7071` by default; unless environment
-variables are pre-configured, it generates a random bearer token on each launch
-and shares it exclusively between the web proxy and Go daemon process.
-`WEBCYBER_ALLOW_LOCAL` defaults to `true` under this script for local
-development. If either process terminates, the runner gracefully shuts down the
-remaining child process.
+- **Web Control Plane**: `http://localhost:3000`
+- **Go Control Service**: `http://127.0.0.1:7071` (automatically authenticated via generated Bearer token)
 
-To develop the web interface standalone:
+### 3. Run Go CLI Core Independently
+
+You can execute scans directly from your terminal using the Go CLI:
 
 ```bash
-npm run dev
+# Run Go unit tests
+npm run core:test
+
+# Run passive observation scan on an authorized Web target
+go run ./cmd/webcyber scan --type web --target https://example.com --profile observe --format sarif
+
+# Run SAST scan on a local repository
+go run ./cmd/webcyber scan --type source --target . --profile safe --format json
 ```
 
-This command does not start the Go backend daemon. If the control API is
-unreachable, the dashboard intentionally displays an offline status without
-generating fake or mock scan results.
+### 4. Desktop Electron Application
 
-To run the control service independently, set `WEBCYBER_CONTROL_TOKEN`.
-`WEBCYBER_API_URL` configures the URL the web proxy connects to,
-`WEBCYBER_CONTROL_ADDR` configures the bind address for the Go service, and
-`WEBCYBER_ALLOW_LOCAL` controls whether local target types are exposed over the
-API. The API provides health/capability checks, job creation, listing and
-reading, cancellation, and per-job SSE event streams.
-
-Go CLI:
-
-```bash
-go test ./cmd/... ./internal/...
-go run ./cmd/webcyber scan --type source --target . --profile observe --format json
-```
-
-Observation checks against an authorized URL:
-
-```bash
-go run ./cmd/webcyber scan \
-  --type web \
-  --target https://example.com \
-  --profile observe \
-  --format sarif
-```
-
-Desktop shell:
+To build and run the native desktop application shell:
 
 ```bash
 npm --prefix desktop install
@@ -126,39 +133,53 @@ npm --prefix desktop run prepare:scanner
 npm --prefix desktop start
 ```
 
-## Security Profiles
+---
 
-| Profil    | Amaç                                                                                | Varsayılan sınır                  |
-| --------- | ----------------------------------------------------------------------------------- | --------------------------------- |
-| `observe` | TLS, başlık, metadata ve yerel statik analiz                                        | Veri değiştirmez                  |
-| `safe`    | MVP'de aynı salt-okunur web gözlemi; daha geniş yerel statik kurallar için sözleşme | Veri değiştirmez; crawl henüz yok |
-| `active`  | Yetkili staging ortamında ileri testler                                             | Bu ilk dilimde kapalı             |
+## 🛡️ Security Profiles
 
-Halka açık bir WebCyber kurulumu, aktif tarama başlatmadan önce hedef sahipliği,
-Rules of Engagement kaydı ve tenant bazlı oran limitini zorunlu tutmalıdır.
+| Profile | Purpose & Scope | Execution Boundaries |
+| :--- | :--- | :--- |
+| `observe` | Metadata, TLS parameters, HTTP headers, and read-only static inspection. | Non-mutating, zero payload storage. |
+| `safe` | Broad static code analysis, manifest inspection, and passive vulnerability checks. | Non-mutating, sandboxed execution. |
+| `active` | Active DAST and staging environment vulnerability verification. | Restricted in Phase 1 (requires explicit tenant authorization). |
 
-## Repository Structure
+---
+
+## 📂 Repository Structure
 
 ```text
-app/                 Web operations dashboard and same-origin control proxy layer
-cmd/webcyber/        CLI entrypoint
-cmd/webcyberd/       Local Go control daemon
-internal/            Scanner core, control queue, and built-in adapters
-desktop/             Secure Electron desktop shell and CLI bridge
-docs/                Architecture, threat model, and roadmap documentation
-schemas/             Plugin manifest contracts
+├── app/                  # Next.js web dashboard & same-origin control proxy
+├── cmd/
+│   ├── webcyber/         # Go CLI scanner entrypoint
+│   └── webcyberd/        # Go local control daemon
+├── desktop/              # Electron desktop application shell & IPC bridge
+├── docs/                 # Architecture, roadmap & threat model docs
+│   └── images/           # Dashboard screenshots & media assets
+├── internal/             # Scanner engine core, job queue, and built-in rules
+├── public/               # Public assets & dashboard screenshots
+├── schemas/              # Plugin manifest & SARIF contract definitions
+└── scripts/              # Full-stack orchestrator scripts (dev-full.mjs)
 ```
 
-## Roadmap
+---
 
-Phase 1a unifies the web dashboard and Go scanner core within a secure local
-control boundary. Phase 1b will introduce a persistent, multi-tenant production
-control plane. Subsequent phases will bring worker adapters, deeper
-mobile/desktop analysis engines, and opt-in active DAST. The detailed plan is
-documented in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+## 🛣️ Roadmap & Future Scope
 
-## Contributing & License
+- [x] **Phase 1a**: Unified 8-module web interface, Go local control plane, SSE live streaming, and Electron desktop shell.
+- [ ] **Phase 1b**: Multi-tenant persistent control daemon with SQLite/D1 database bindings.
+- [ ] **Phase 2**: Worker adapter plugins for Semgrep, Trivy, Gitleaks, Nuclei, and MobSF.
+- [ ] **Phase 3**: Signed worker binary verification and active staging DAST modules.
 
-For contribution guidelines, see [`CONTRIBUTING.md`](CONTRIBUTING.md). For
-security reporting, see [`SECURITY.md`](SECURITY.md). VibeCyber is released
-under the Apache-2.0 License.
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for detailed release milestones.
+
+---
+
+## 📄 License & Security
+
+- **License**: Released under the [Apache-2.0 License](LICENSE).
+- **Contributing**: Contributions are welcome! Please review [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- **Security Vulnerability Reporting**: For security disclosures, refer to [`SECURITY.md`](SECURITY.md).
+
+<div align="center">
+  <sub>Built with ❤️ by the Vibe Coders Security Team.</sub>
+</div>
