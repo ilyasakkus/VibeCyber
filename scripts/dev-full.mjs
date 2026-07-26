@@ -167,7 +167,7 @@ control.once("error", (error) => {
 
 try {
   await waitForControlPlane(control);
-  console.log(`WebCyber control plane ready: ${apiURL}`);
+  console.log(`VibeCyber control plane ready: ${apiURL}`);
 
   const npm = npmInvocation();
   const web = launch(npm.command, npm.args);

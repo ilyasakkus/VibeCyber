@@ -1,6 +1,6 @@
 # Güvenlik Politikası
 
-## WebCyber'da bir açık bulduysanız
+## VibeCyber'da bir açık bulduysanız
 
 Lütfen açığı herkese açık issue olarak paylaşmayın. GitHub deposundaki
 **Security → Report a vulnerability** akışını kullanarak özel güvenlik bildirimi
@@ -26,7 +26,7 @@ token veya üçüncü taraf sisteme ait hassas kanıt eklemeyin.
 - Hizmet kesintisine yol açabilecek yük, brute force veya geniş port taraması
   kullanmayın.
 - Bir üçüncü taraf üründe açık bulursanız o ürünün sorumlu bildirim sürecini
-  izleyin; kanıtı WebCyber issue'larına taşımayın.
+  izleyin; kanıtı VibeCyber issue'larına taşımayın.
 
-WebCyber'ın güvenlik politikalarını aşmaya yarayan değişiklikler varsayılan
+VibeCyber'ın güvenlik politikalarını aşmaya yarayan değişiklikler varsayılan
 dağıtıma kabul edilmez.
