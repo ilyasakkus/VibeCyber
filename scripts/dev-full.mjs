@@ -66,7 +66,7 @@ function signalChild(child, signal) {
       windowsHide: true,
     });
     taskkill.once("error", (error) => {
-      console.error(`Alt süreç ağacı durdurulamadı: ${error.message}`);
+      console.error(`Failed to stop child process tree: ${error.message}`);
     });
     return;
   }
@@ -75,7 +75,7 @@ function signalChild(child, signal) {
     process.kill(-child.pid, signal);
   } catch (error) {
     if (error?.code !== "ESRCH") {
-      console.error(`Alt süreç durdurulamadı: ${error.message}`);
+      console.error(`Failed to stop child process: ${error.message}`);
     }
   }
 }
@@ -120,7 +120,7 @@ async function waitForControlPlane(child) {
 
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error("Go kontrol düzlemi hazır olmadan kapandı.");
+      throw new Error("Go control plane exited before becoming ready.");
     }
 
     try {
@@ -131,7 +131,7 @@ async function waitForControlPlane(child) {
       if (response.ok) {
         return;
       }
-      lastError = new Error(`health yanıtı HTTP ${response.status}`);
+      lastError = new Error(`health response HTTP ${response.status}`);
     } catch (error) {
       lastError = error;
     }
@@ -139,7 +139,7 @@ async function waitForControlPlane(child) {
   }
 
   throw new Error(
-    `Go kontrol düzlemi 45 saniyede hazır olmadı${
+    `Go control plane did not become ready within 45 seconds${
       lastError ? `: ${lastError.message}` : "."
     }`,
   );
@@ -161,18 +161,18 @@ process.once("SIGTERM", () => void stop(143));
 
 const control = launch("go", ["run", "./cmd/webcyberd"]);
 control.once("error", (error) => {
-  console.error(`Go kontrol düzlemi başlatılamadı: ${error.message}`);
+  console.error(`Failed to launch Go control plane: ${error.message}`);
   void stop(1);
 });
 
 try {
   await waitForControlPlane(control);
-  console.log(`WebCyber kontrol düzlemi hazır: ${apiURL}`);
+  console.log(`WebCyber control plane ready: ${apiURL}`);
 
   const npm = npmInvocation();
   const web = launch(npm.command, npm.args);
   web.once("error", (error) => {
-    console.error(`Web paneli başlatılamadı: ${error.message}`);
+    console.error(`Failed to launch web panel: ${error.message}`);
     void stop(1);
   });
   web.once("close", (code, signal) => {
@@ -182,7 +182,7 @@ try {
   });
   control.once("close", (code, signal) => {
     if (!stopping) {
-      console.error("Go kontrol düzlemi beklenmedik biçimde kapandı.");
+      console.error("Go control plane exited unexpectedly.");
       void stop(signal ? 1 : (code ?? 1));
     }
   });

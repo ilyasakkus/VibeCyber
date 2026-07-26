@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090e10" />
+      <stop offset="100%" stop-color="#121b1e" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5ce7ac" />
+      <stop offset="100%" stop-color="#67cde3" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  
+  <!-- Base Container -->
+  <rect width="512" height="512" rx="128" fill="url(#bg)" stroke="#213035" stroke-width="12"/>
+  
+  <!-- Outer Cyber Shield Line -->
+  <path d="M 256 72 L 392 128 V 264 C 392 352 256 432 256 432 C 256 432 120 352 120 264 V 128 Z" 
+        fill="none" stroke="url(#accent)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+  
+  <!-- Inner Shield Core -->
+  <path d="M 256 112 L 360 156 V 264 C 360 332 256 392 256 392 C 256 392 152 332 152 264 V 156 Z" 
+        fill="#10251d" fill-opacity="0.75" stroke="#30d991" stroke-width="8"/>
+        
+  <!-- Radar Cross & Lock Node -->
+  <circle cx="256" cy="248" r="44" fill="none" stroke="url(#accent)" stroke-width="10"/>
+  <circle cx="256" cy="248" r="14" fill="#5ce7ac"/>
+  
+  <!-- Tech Accent Markers -->
+  <path d="M 256 180 V 200 M 256 296 V 316 M 188 248 H 208 M 304 248 H 324" 
+        stroke="#5ce7ac" stroke-width="8" stroke-linecap="round"/>
+</svg>

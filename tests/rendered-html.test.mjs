@@ -32,14 +32,17 @@ test("server-renders the WebCyber operations dashboard", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<html[^>]*\blang=["']tr["']/i);
-  assert.match(html, /<title>WebCyber \| Güvenlik Operasyon Merkezi<\/title>/i);
-  assert.match(html, /Güvenlik sınırları etkin/);
-  assert.match(html, /Yeni tarama oluştur/);
-  assert.match(html, /Rapor bulguları/);
-  assert.match(html, /Go tarama motoru/);
-  assert.match(html, /teknik risk endeksi/i);
-  assert.match(html, /Kontrol hizmetine bağlanılıyor/);
+  assert.match(html, /<html[^>]*\blang=["']en["']/i);
+  assert.match(html, /<title>Vibe Cyber V\.1\.0 \| Vibe Coders Security Hand Tool<\/title>/i);
+  assert.match(html, /Security boundaries active/);
+  assert.match(html, /Create new scan/);
+  assert.match(html, /Report findings/);
+  assert.match(html, /Go scanner engine/);
+  assert.match(html, /technical risk index/i);
+  assert.match(html, /Connecting to control service/);
+  assert.match(html, /Export XLSX/);
+  assert.match(html, /Export CSV/);
+  assert.match(html, /Export JSON/);
   assert.doesNotMatch(html, /Örnek bulgular|İnteraktif demo|örnek işi/i);
   assert.match(html, /property=["']og:image["'][^>]*content=["']https:\/\/webcyber\.dev\/og\.png["']/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
@@ -55,20 +58,19 @@ test("removes starter assets and ships a real social card", async () => {
 
   await assert.rejects(access(previewRoot));
   assert.match(page, /^"use client";/);
-  assert.match(page, /Active profil bu sürümde sunulmuyor/);
+  assert.match(page, /Active profile is not available in this build/);
   assert.match(page, /\/api\/control\/health/);
   assert.match(page, /authorized: true/);
   assert.match(page, /new EventSource/);
+  assert.match(page, /browse-target-button/);
   assert.doesNotMatch(page, /initialScans|demoPhase|const findings\s*=/);
   assert.match(layout, /generateMetadata/);
   assert.match(layout, /\/og\.png/);
-  assert.equal(JSON.parse(packageJson).name, "webcyber");
+  assert.equal(JSON.parse(packageJson).name, "vibe-cyber");
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.deepEqual([...socialCard.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
 
-  await assert.rejects(
-    access(new URL("../public/favicon.svg", import.meta.url)),
-  );
+  await access(new URL("../public/favicon.svg", import.meta.url));
   await access(new URL("LICENSE", templateRoot));
   await access(new URL("SECURITY.md", templateRoot));
 });
@@ -78,6 +80,6 @@ test("control proxy fails closed when its server credential is absent", async ()
   assert.equal(response.status, 503);
   assert.match(response.headers.get("cache-control") ?? "", /no-store/);
   assert.deepEqual(await response.json(), {
-    error: "Kontrol hizmeti için sunucu kimlik bilgisi yapılandırılmamış.",
+    error: "Server credentials not configured for control service.",
   });
 });
