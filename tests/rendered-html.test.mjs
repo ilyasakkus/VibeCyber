@@ -5,14 +5,14 @@ import test from "node:test";
 const templateRoot = new URL("../", import.meta.url);
 const previewRoot = new URL("../app/_sites-preview/", import.meta.url);
 
-async function render() {
+async function render(pathname = "/", accept = "text/html") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
+    new Request(new URL(pathname, "http://localhost/"), {
+      headers: { accept },
     }),
     {
       ASSETS: {
@@ -36,8 +36,11 @@ test("server-renders the WebCyber operations dashboard", async () => {
   assert.match(html, /<title>WebCyber \| Güvenlik Operasyon Merkezi<\/title>/i);
   assert.match(html, /Güvenlik sınırları etkin/);
   assert.match(html, /Yeni tarama oluştur/);
-  assert.match(html, /Örnek bulgular/);
-  assert.match(html, /Masaüstü ajanı/);
+  assert.match(html, /Rapor bulguları/);
+  assert.match(html, /Go tarama motoru/);
+  assert.match(html, /teknik risk endeksi/i);
+  assert.match(html, /Kontrol hizmetine bağlanılıyor/);
+  assert.doesNotMatch(html, /Örnek bulgular|İnteraktif demo|örnek işi/i);
   assert.match(html, /property=["']og:image["'][^>]*content=["']https:\/\/webcyber\.dev\/og\.png["']/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
@@ -52,7 +55,11 @@ test("removes starter assets and ships a real social card", async () => {
 
   await assert.rejects(access(previewRoot));
   assert.match(page, /^"use client";/);
-  assert.match(page, /Active profil.*yazılı hedef yetkisi/s);
+  assert.match(page, /Active profil bu sürümde sunulmuyor/);
+  assert.match(page, /\/api\/control\/health/);
+  assert.match(page, /authorized: true/);
+  assert.match(page, /new EventSource/);
+  assert.doesNotMatch(page, /initialScans|demoPhase|const findings\s*=/);
   assert.match(layout, /generateMetadata/);
   assert.match(layout, /\/og\.png/);
   assert.equal(JSON.parse(packageJson).name, "webcyber");
@@ -64,4 +71,13 @@ test("removes starter assets and ships a real social card", async () => {
   );
   await access(new URL("LICENSE", templateRoot));
   await access(new URL("SECURITY.md", templateRoot));
+});
+
+test("control proxy fails closed when its server credential is absent", async () => {
+  const response = await render("/api/control/health", "application/json");
+  assert.equal(response.status, 503);
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+  assert.deepEqual(await response.json(), {
+    error: "Kontrol hizmeti için sunucu kimlik bilgisi yapılandırılmamış.",
+  });
 });

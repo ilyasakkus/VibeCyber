@@ -9,12 +9,15 @@
   },
   "scripts": {
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
+    "dev:full": "node scripts/dev-full.mjs",
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "typecheck": "tsc --noEmit --incremental false",
     "db:generate": "drizzle-kit generate",
     "core:test": "go test ./cmd/... ./internal/...",
+    "control:smoke": "node scripts/smoke-control.mjs",
     "desktop:check": "node --check desktop/main.mjs && node --check desktop/preload.mjs && node --check desktop/renderer/app.mjs && node --check desktop/scripts/prepare-scanner.mjs"
   },
   "dependencies": {

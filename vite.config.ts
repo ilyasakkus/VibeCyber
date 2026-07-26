@@ -5,6 +5,10 @@ import { sites } from "./build/sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
+const LOCAL_CONTROL_SECRET_BINDINGS = [
+  "WEBCYBER_API_URL",
+  "WEBCYBER_CONTROL_TOKEN",
+];
 
 const { d1, r2 } = hostingConfig;
 
@@ -33,7 +37,7 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ command }) => {
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -42,6 +46,16 @@ export default defineConfig(async () => {
 
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
   const { cloudflare } = await import("@cloudflare/vite-plugin");
+  const workerConfig =
+    command === "serve"
+      ? {
+          ...localBindingConfig,
+          // Wrangler reads only these names from the inherited process
+          // environment and injects them as secret_text Worker bindings.
+          // Values stay out of Vite's client env and generated build config.
+          secrets: { required: LOCAL_CONTROL_SECRET_BINDINGS },
+        }
+      : localBindingConfig;
 
   return {
     server: isCodexSeatbeltSandbox
@@ -52,7 +66,7 @@ export default defineConfig(async () => {
       sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: localBindingConfig,
+        config: workerConfig,
       }),
     ],
   };

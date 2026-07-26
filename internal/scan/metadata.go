@@ -104,6 +104,31 @@ func hashStableFile(f interface {
 	return hex.EncodeToString(hash.Sum(nil)), bytesHashed, true, nil
 }
 
+// invalidatePublishedTargetHashIfChanged performs a second bounded stable read
+// after analysis. A mobile or desktop artifact can otherwise be modified after
+// metadata collection, leaving the report's SHA-256 unrelated to the bytes
+// inspected by later modules.
+func invalidatePublishedTargetHashIfChanged(tree *targetTree, metadata map[string]string, hashLimit int64) bool {
+	expected := metadata["sha256"]
+	if expected == "" || tree == nil || tree.TargetIsDir || len(tree.Files) != 1 {
+		return false
+	}
+	f, info, err := openRecord(tree.Files[0])
+	if err == nil {
+		defer f.Close()
+		digest, _, stable, hashErr := hashStableFile(f, info, hashLimit)
+		if hashErr == nil && stable && digest == expected {
+			return false
+		}
+	}
+	delete(metadata, "sha256")
+	delete(metadata, "bytes_hashed")
+	delete(metadata, "hash_scope")
+	metadata["sha256_status"] = "invalidated-file-changed-during-scan"
+	metadata["stability_status"] = "changed-or-unverifiable-during-scan"
+	return true
+}
+
 func detectFileType(extension string, head, tail []byte) string {
 	extension = strings.ToLower(extension)
 	switch {

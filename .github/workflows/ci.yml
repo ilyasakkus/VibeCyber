@@ -18,6 +18,7 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
+      - run: npm run typecheck
       - run: npm run lint
       - run: npm test
 
@@ -29,7 +30,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
       - run: go test ./cmd/... ./internal/...
+      - run: npm run control:smoke
 
   desktop-source:
     runs-on: ubuntu-latest
