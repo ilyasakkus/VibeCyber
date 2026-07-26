@@ -9,88 +9,9 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  FormEvent,
-  type CSSProperties,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
 
 type TargetType = "web" | "source" | "mobile" | "desktop";
 type Profile = "observe" | "safe";
-type JobStatus =
-  | "queued"
-  | "running"
-  | "cancelling"
-  | "completed"
-  | "partial"
-  | "failed"
-  | "cancelled";
-type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
-type ConfidenceLevel = "high" | "medium" | "low" | "unspecified";
-type APIState = "loading" | "online" | "offline";
-
-type Capabilities = {
-  web: boolean;
-  source: boolean;
-  mobile: boolean;
-  desktop: boolean;
-  localPaths: boolean;
-  maxConcurrency: number;
-};
-
-type HealthResponse = {
-  status: string;
-  version: string;
-  capabilities: Capabilities;
-};
-
-type ReportFinding = {
-  rule_id: string;
-  fingerprint: string;
-  module: string;
-  title: string;
-  severity: "critical" | "high" | "medium" | "low" | "info";
-  confidence?: string;
-  cwe?: string;
-  cve?: string;
-  description: string;
-  remediation?: string;
-  evidence?: {
-    location?: string;
-    line?: number;
-    url?: string;
-    snippet?: string;
-    details?: Record<string, string>;
-  };
-};
-
-type ScanReport = {
-  schema_version: string;
-  scan?: {
-    id: string;
-    type: TargetType;
-    target: string;
-    profile: Profile;
-    status: string;
-    started_at?: string;
-    finished_at?: string;
-    duration_ms?: number;
-  };
-  summary?: {
-    total: number;
-    critical: number;
-    high: number;
-    medium: number;
-    low: number;
-    info: number;
-  };
-  findings?: ReportFinding[];
-  limitations?: string[];
-};
 type JobStatus =
   | "queued"
   | "running"
@@ -165,15 +86,7 @@ type ScanReport = {
 type ScanJob = {
   id: string;
   type: TargetType;
-  type: TargetType;
   target: string;
-  profile: Profile;
-  status: JobStatus;
-  createdAt: string;
-  startedAt?: string;
-  finishedAt?: string;
-  error?: string;
-  report?: ScanReport;
   profile: Profile;
   status: JobStatus;
   createdAt: string;
@@ -185,19 +98,13 @@ type ScanJob = {
 
 type UIFinding = {
   key: string;
-type UIFinding = {
-  key: string;
   id: string;
   title: string;
   detail: string;
   description: string;
   remediation?: string;
-  description: string;
-  remediation?: string;
   target: string;
   severity: Severity;
-  severityKey: string;
-  confidence: ConfidenceLevel;
   severityKey: string;
   confidence: ConfidenceLevel;
   age: string;
@@ -266,9 +173,6 @@ const targetOptions: Array<{
   { id: "source", label: "Source code", eyebrow: "SAST + SCA", icon: "〈〉" },
   { id: "mobile", label: "Mobile app", eyebrow: "APK / IPA", icon: "▣" },
   { id: "desktop", label: "Desktop", eyebrow: "Binary / App", icon: "◈" },
-  { id: "source", label: "Source code", eyebrow: "SAST + SCA", icon: "〈〉" },
-  { id: "mobile", label: "Mobile app", eyebrow: "APK / IPA", icon: "▣" },
-  { id: "desktop", label: "Desktop", eyebrow: "Binary / App", icon: "◈" },
 ];
 
 const targetConfig: Record<
@@ -279,22 +183,13 @@ const targetConfig: Record<
     label: "Target address",
     placeholder: "https://app.example.com",
     hint: "Scope is limited to this URL; redirects and private network targets are validated securely.",
-    label: "Target address",
-    placeholder: "https://app.example.com",
-    hint: "Scope is limited to this URL; redirects and private network targets are validated securely.",
   },
   source: {
     label: "Repository or project path",
     placeholder: "/projects/api",
     hint: "Path is analyzed read-only on the machine running the Go control service.",
-    label: "Repository or project path",
-    placeholder: "/projects/api",
-    hint: "Path is analyzed read-only on the machine running the Go control service.",
   },
   mobile: {
-    label: "Mobile package path",
-    placeholder: "/builds/app-release.apk or app.ipa",
-    hint: "APK and IPA packages are analyzed in a local, sandboxed workflow.",
     label: "Mobile package path",
     placeholder: "/builds/app-release.apk or app.ipa",
     hint: "APK and IPA packages are analyzed in a local, sandboxed workflow.",
@@ -420,13 +315,10 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
 
 function targetKindLabel(kind: TargetType) {
   return targetOptions.find((item) => item.id === kind)?.label ?? "Target";
-  return targetOptions.find((item) => item.id === kind)?.label ?? "Target";
 }
 
 function validateTarget(type: TargetType, value: string) {
   const cleanTarget = value.trim();
-  if (!cleanTarget) return { valid: false, error: "Enter a target to scan." };
-  if (type !== "web") return { valid: true, error: "" };
   if (!cleanTarget) return { valid: false, error: "Enter a target to scan." };
   if (type !== "web") return { valid: true, error: "" };
 
@@ -434,17 +326,13 @@ function validateTarget(type: TargetType, value: string) {
     const parsedTarget = new URL(cleanTarget);
     if (parsedTarget.protocol !== "http:" && parsedTarget.protocol !== "https:") {
       return { valid: false, error: "Web target must start with http:// or https://." };
-    if (parsedTarget.protocol !== "http:" && parsedTarget.protocol !== "https:") {
-      return { valid: false, error: "Web target must start with http:// or https://." };
     }
     if (!parsedTarget.hostname) {
-      return { valid: false, error: "Web target must contain a valid hostname." };
       return { valid: false, error: "Web target must contain a valid hostname." };
     }
     if (parsedTarget.username || parsedTarget.password) {
       return {
         valid: false,
-        error: "User credentials cannot be included in the URL.",
         error: "User credentials cannot be included in the URL.",
       };
     }
@@ -452,34 +340,6 @@ function validateTarget(type: TargetType, value: string) {
   } catch {
     return {
       valid: false,
-      error: "Enter a valid web URL (e.g., https://app.example.com).",
-    };
-  }
-}
-
-function relativeTime(value?: string) {
-  if (!value) return "—";
-  const timestamp = new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) return "—";
-  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
-function normalizeConfidence(confidence?: string): ConfidenceLevel {
-  switch (confidence?.toLowerCase()) {
-    case "high":
-      return "high";
-    case "medium":
-      return "medium";
-    case "low":
-      return "low";
-    default:
-      return "unspecified";
       error: "Enter a valid web URL (e.g., https://app.example.com).",
     };
   }
@@ -616,51 +476,6 @@ function riskIndexFromSummary(
       summary.medium * 6 +
       summary.low * 2,
   );
-  return [
-    ...buckets.critical,
-    ...buckets.high,
-    ...buckets.medium,
-    ...buckets.low,
-    ...buckets.info,
-  ].slice(0, limit);
-}
-
-function aggregateReportSummary(scans: ScanJob[]): FindingSummary {
-  return scans.reduce<FindingSummary>(
-    (summary, job) => {
-      const reportSummary = job.report?.summary;
-      if (reportSummary) {
-        summary.total += reportSummary.total;
-        summary.critical += reportSummary.critical;
-        summary.high += reportSummary.high;
-        summary.medium += reportSummary.medium;
-        summary.low += reportSummary.low;
-        summary.info += reportSummary.info;
-        return summary;
-      }
-
-      for (const finding of job.report?.findings ?? []) {
-        summary.total += 1;
-        summary[finding.severity] += 1;
-      }
-      return summary;
-    },
-    { total: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0 },
-  );
-}
-
-function riskIndexFromSummary(
-  summary: FindingSummary,
-  reportCount: number,
-) {
-  if (reportCount === 0) return null;
-  return Math.min(
-    100,
-    summary.critical * 22 +
-      summary.high * 12 +
-      summary.medium * 6 +
-      summary.low * 2,
-  );
 }
 
 export default function Home() {
@@ -681,24 +496,7 @@ export default function Home() {
   const [showAllScans, setShowAllScans] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<"All" | Severity>(
     "All",
-  const [apiState, setAPIState] = useState<APIState>("loading");
-  const [apiError, setAPIError] = useState("");
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [scans, setScans] = useState<ScanJob[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isCancellingAll, setIsCancellingAll] = useState(false);
-  const [cancellingIDs, setCancellingIDs] = useState<Set<string>>(new Set());
-  const [showAllScans, setShowAllScans] = useState(false);
-  const [severityFilter, setSeverityFilter] = useState<"All" | Severity>(
-    "All",
   );
-  const [selectedTargetFilter, setSelectedTargetFilter] =
-    useState<string>("All Targets");
-  const [highConfidenceOnly, setHighConfidenceOnly] = useState(false);
-  const [visibleFindingLimit, setVisibleFindingLimit] =
-    useState(FINDING_PAGE_SIZE);
-  const [activeFindingModal, setActiveFindingModal] =
-    useState<UIFinding | null>(null);
   const [selectedTargetFilter, setSelectedTargetFilter] =
     useState<string>("All Targets");
   const [highConfidenceOnly, setHighConfidenceOnly] = useState(false);
@@ -708,8 +506,6 @@ export default function Home() {
     useState<UIFinding | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
-  const targetTypeRef = useRef<TargetType>("web");
-  const reportCacheRef = useRef<Map<string, ScanReport>>(new Map());
   const targetTypeRef = useRef<TargetType>("web");
   const reportCacheRef = useRef<Map<string, ScanReport>>(new Map());
   const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
@@ -927,24 +723,12 @@ export default function Home() {
     },
     [apiState, health],
   );
-  const targetCapabilityEnabled = useCallback(
-    (type: TargetType) => {
-      if (apiState !== "online" || !health) return false;
-      if (type === "web") return health.capabilities.web;
-      return (
-        health.capabilities.localPaths &&
-        Boolean(health.capabilities[type])
-      );
-    },
-    [apiState, health],
-  );
   const targetValidation = useMemo(
     () => validateTarget(targetType, target),
     [target, targetType],
   );
   const showTargetError = targetTouched && !targetValidation.valid;
   const scanCanStart =
-    apiState === "online" &&
     apiState === "online" &&
     targetValidation.valid &&
     scopeConfirmed &&
@@ -1249,38 +1033,7 @@ export default function Home() {
       }
       return source;
     });
-    if (apiState !== "online" || !streamingScanIDs) return;
-    const ids = streamingScanIDs.split("|");
-    const sources = ids.map((id) => {
-      const source = new EventSource(
-        `/api/control/scans/${encodeURIComponent(id)}/events`,
-      );
-      const refresh = () => void fetchJob(id);
-      source.onmessage = refresh;
-      for (const eventName of [
-        "running",
-        "cancelling",
-        "completed",
-        "partial",
-        "failed",
-        "cancelled",
-        "scan",
-      ]) {
-        source.addEventListener(eventName, refresh);
-      }
-      return source;
-    });
 
-    return () => sources.forEach((source) => source.close());
-  }, [apiState, fetchJob, streamingScanIDs]);
-
-  useEffect(() => {
-    if (apiState !== "online" || !activeScanIDs) return;
-    const poll = window.setInterval(() => {
-      void loadScans(true).catch(() => undefined);
-    }, 4000);
-    return () => window.clearInterval(poll);
-  }, [activeScanIDs, apiState, loadScans]);
     return () => sources.forEach((source) => source.close());
   }, [apiState, fetchJob, streamingScanIDs]);
 
@@ -1293,11 +1046,6 @@ export default function Home() {
   }, [activeScanIDs, apiState, loadScans]);
 
   function changeTargetType(nextType: TargetType) {
-    if (!targetCapabilityEnabled(nextType)) {
-      setNotice("This target type is not enabled in control service capabilities.");
-      return;
-    }
-    targetTypeRef.current = nextType;
     if (!targetCapabilityEnabled(nextType)) {
       setNotice("This target type is not enabled in control service capabilities.");
       return;
@@ -1399,11 +1147,8 @@ export default function Home() {
     }
     if (!scopeConfirmed) {
       setNotice("Confirm authorization before starting a scan.");
-      setNotice("Confirm authorization before starting a scan.");
       return;
     }
-    if (!targetCapabilityEnabled(targetType)) {
-      setNotice("This target type is not enabled in control service capabilities.");
     if (!targetCapabilityEnabled(targetType)) {
       setNotice("This target type is not enabled in control service capabilities.");
       return;
@@ -1545,7 +1290,6 @@ export default function Home() {
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
         Skip to main content
-        Skip to main content
       </a>
 
       <aside
@@ -1557,18 +1301,14 @@ export default function Home() {
         <div className="brand-row">
           <div className="brand-mark" aria-hidden="true">
             V<span>C</span>
-            V<span>C</span>
           </div>
           <div className="brand-copy">
-            <strong>Vibe Cyber</strong>
-            <span>V.1.0</span>
             <strong>Vibe Cyber</strong>
             <span>V.1.0</span>
           </div>
           <button
             className="nav-close"
             type="button"
-            aria-label="Close menu"
             aria-label="Close menu"
             ref={navCloseButtonRef}
             onClick={() => closeMobileNav()}
@@ -1579,10 +1319,7 @@ export default function Home() {
 
         <div className="workspace-switcher">
           <span className="workspace-avatar">VC</span>
-          <span className="workspace-avatar">VC</span>
           <span>
-            <small>Workspace</small>
-            <strong>Local control plane</strong>
             <small>Workspace</small>
             <strong>Local control plane</strong>
           </span>
@@ -1636,15 +1373,8 @@ export default function Home() {
           <div className="agent-mini-head">
             <span className={`status-dot ${apiState === "online" ? "online" : ""}`} />
             <strong>Go scanner engine</strong>
-            <span className={`status-dot ${apiState === "online" ? "online" : ""}`} />
-            <strong>Go scanner engine</strong>
           </div>
           <p>
-            {apiState === "online"
-              ? `v${health?.version || "—"} · ${localPathsEnabled ? "Local paths enabled" : "Web targets only"}`
-              : apiState === "loading"
-                ? "Checking connection..."
-                : "Control service offline"}
             {apiState === "online"
               ? `v${health?.version || "—"} · ${localPathsEnabled ? "Local paths enabled" : "Web targets only"}`
               : apiState === "loading"
@@ -1655,20 +1385,14 @@ export default function Home() {
             type="button"
             onClick={() => void connectControlPlane()}
             disabled={apiState === "loading"}
-            onClick={() => void connectControlPlane()}
-            disabled={apiState === "loading"}
           >
-            {apiState === "loading" ? "Checking…" : "Refresh connection"}
             {apiState === "loading" ? "Checking…" : "Refresh connection"}
           </button>
         </div>
 
         <div className="sidebar-footer">
           <span className="user-avatar">VC</span>
-          <span className="user-avatar">VC</span>
           <span>
-            <strong>Vibe Cyber V.1.0</strong>
-            <small>Vibe Coders Security Hand Tool</small>
             <strong>Vibe Cyber V.1.0</strong>
             <small>Vibe Coders Security Hand Tool</small>
           </span>
@@ -1680,7 +1404,6 @@ export default function Home() {
           className="nav-backdrop"
           type="button"
           aria-label="Close menu"
-          aria-label="Close menu"
           onClick={() => closeMobileNav()}
         />
       )}
@@ -1691,7 +1414,6 @@ export default function Home() {
             <button
               className="mobile-menu-button"
               type="button"
-              aria-label="Open menu"
               aria-label="Open menu"
               aria-expanded={mobileNavOpen}
               aria-controls="mobile-navigation"
@@ -1723,32 +1445,11 @@ export default function Home() {
                 : apiState === "loading"
                   ? "Connecting"
                   : "Engine offline"}
-            <div
-              className={`environment-chip ${apiState === "offline" ? "offline" : ""}`}
-              role="status"
-            >
-              <span />{" "}
-              {apiState === "online"
-                ? "Go engine connected"
-                : apiState === "loading"
-                  ? "Connecting"
-                  : "Engine offline"}
             </div>
           </div>
         </header>
 
         <main id="main-content">
-          <div
-            className={`demo-banner ${apiState === "offline" ? "api-offline" : apiState === "online" ? "api-online" : ""}`}
-            role={apiState === "offline" ? "alert" : "status"}
-          >
-            <span className="demo-banner-label">
-              {apiState === "online"
-                ? "LIVE"
-                : apiState === "loading"
-                  ? "CONNECT"
-                  : "OFFLINE"}
-            </span>
           <div
             className={`demo-banner ${apiState === "offline" ? "api-offline" : apiState === "online" ? "api-online" : ""}`}
             role={apiState === "offline" ? "alert" : "status"}
@@ -1768,19 +1469,7 @@ export default function Home() {
                     ? "Connecting to control service"
                     : "Scanner engine unreachable"}
               </strong>
-              <strong>
-                {apiState === "online"
-                  ? "Real Go control plane connected"
-                  : apiState === "loading"
-                    ? "Connecting to control service"
-                    : "Scanner engine unreachable"}
-              </strong>
               <span>
-                {apiState === "online"
-                  ? `${health?.capabilities.maxConcurrency ?? 0} concurrent jobs · results generated from live scan reports.`
-                  : apiState === "loading"
-                    ? "Reading health and capability specs."
-                    : `${apiError || "Launch Go control service and refresh connection."} Fake data is not displayed.`}
                 {apiState === "online"
                   ? `${health?.capabilities.maxConcurrency ?? 0} concurrent jobs · results generated from live scan reports.`
                   : apiState === "loading"
@@ -1797,25 +1486,14 @@ export default function Home() {
                 Retry
               </button>
             )}
-            {apiState === "offline" && (
-              <button
-                className="banner-action"
-                type="button"
-                onClick={() => void connectControlPlane()}
-              >
-                Retry
-              </button>
-            )}
           </div>
 
           <div
-            className={`safety-strip ${cancellationInProgress ? "safety-strip-paused" : ""}`}
             className={`safety-strip ${cancellationInProgress ? "safety-strip-paused" : ""}`}
             id="kill-switch-state"
           >
             <div>
               <span className="safety-icon" aria-hidden="true">
-                {cancellationInProgress ? "■" : "✓"}
                 {cancellationInProgress ? "■" : "✓"}
               </span>
               <p>
@@ -1826,34 +1504,11 @@ export default function Home() {
                       ? `${cancellingScanCount} job(s) completing cancellation`
                       : "Security boundaries active"}
                 </strong>
-                <strong>
-                  {isCancellingAll
-                    ? "Sending cancellation signal"
-                    : cancellingScanCount > 0
-                      ? `${cancellingScanCount} job(s) completing cancellation`
-                      : "Security boundaries active"}
-                </strong>
                 <span>
-                  Observe & Safe profiles · Authorization required · {activeScans.length} active job(s)
                   Observe & Safe profiles · Authorization required · {activeScans.length} active job(s)
                 </span>
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => void cancelAllScans()}
-              disabled={
-                apiState !== "online" ||
-                cancellableScans.length === 0 ||
-                isCancellingAll
-              }
-            >
-              <span aria-hidden="true">■</span>
-              {isCancellingAll
-                ? "Cancelling…"
-                : cancellingScanCount > 0 && cancellableScans.length === 0
-                  ? "Completing cancellation…"
-                  : "Cancel all active jobs"}
             <button
               type="button"
               onClick={() => void cancelAllScans()}
@@ -2592,7 +2247,7 @@ export default function Home() {
                   <div className="card-heading">
                     <div>
                       <span className="section-kicker">COMPLIANCE SCORE</span>
-                      <h2>Policy Enforcement Rate</h2>
+                      2 Policy Enforcement Rate
                     </div>
                   </div>
                   <div className="score-content">
@@ -2965,8 +2620,6 @@ export default function Home() {
           <footer className="product-footer">
             <span>Vibe Cyber V.1.0 · Vibe Coders Security Hand Tool</span>
             <span>Open Source · Apache-2.0 · Your data stays with you</span>
-            <span>Vibe Cyber V.1.0 · Vibe Coders Security Hand Tool</span>
-            <span>Open Source · Apache-2.0 · Your data stays with you</span>
           </footer>
         </main>
       </div>
@@ -2979,7 +2632,6 @@ export default function Home() {
       >
         <span aria-hidden="true">✓</span>
         <p>{notice}</p>
-        <button type="button" aria-label="Close notification" onClick={() => setNotice("")}>
         <button type="button" aria-label="Close notification" onClick={() => setNotice("")}>
           ×
         </button>
