@@ -39,7 +39,17 @@ func (e *Engine) scanDesktop(ctx context.Context, _ Config, report *model.Report
 		metadataStatus = model.ModulePartial
 		metadataLimits = []string{"SHA-256 was not published because the bounded stable-read requirement was not met."}
 	}
+	metadataModuleIndex := len(report.Modules)
 	report.Modules = append(report.Modules, model.ModuleResult{Name: "artifact-metadata", Status: metadataStatus, Summary: "Collected static desktop artifact type, size, and bounded hash metadata.", ItemsSeen: 1, Metadata: metadata, Limitations: metadataLimits})
+	defer func() {
+		if !invalidatePublishedTargetHashIfChanged(tree, metadata, e.limits.MaxArchiveTotalBytes) {
+			return
+		}
+		module := &report.Modules[metadataModuleIndex]
+		module.Status = model.ModulePartial
+		const limitation = "The target changed or could not be reverified after analysis, so its previously computed SHA-256 was invalidated."
+		module.Limitations = append(module.Limitations, limitation)
+	}()
 
 	files, walk := tree.Files, tree.Stats
 	stats := desktopStats{binaryFormats: make(map[string]int)}
@@ -60,7 +70,6 @@ func (e *Engine) scanDesktop(ctx context.Context, _ Config, report *model.Report
 				archive, archiveErr := inspectZIP(record, record.Relative, e.limits, report, nil)
 				if archiveErr != nil {
 					stats.archiveParseErrs++
-					stats.archiveLimitHit = true
 				} else if archive.LimitHit {
 					stats.archiveLimitHit = true
 				}
@@ -103,8 +112,10 @@ func (e *Engine) scanDesktop(ctx context.Context, _ Config, report *model.Report
 	if stats.archives > 0 {
 		archiveStatus = model.ModuleComplete
 		archiveSummary = fmt.Sprintf("Inspected %d ZIP containers without extraction.", stats.archives)
-		if stats.archiveLimitHit {
+		if stats.archiveLimitHit || stats.archiveParseErrs > 0 {
 			archiveStatus = model.ModulePartial
+		}
+		if stats.archiveLimitHit {
 			archiveLimitations = []string{"At least one container or archive-count boundary prevented complete ZIP inspection."}
 		}
 		if stats.archiveParseErrs > 0 {

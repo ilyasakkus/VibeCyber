@@ -51,3 +51,28 @@ func TestHashStableFileRejectsGrowthInsteadOfPublishingPrefixHash(t *testing.T) 
 		t.Fatalf("growth published a prefix hash: digest=%q bytes=%d stable=%v", digest, bytesHashed, stable)
 	}
 }
+
+func TestPublishedTargetHashIsInvalidatedWhenArtifactChangesDuringScan(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "mutable.bin")
+	if err := os.WriteFile(filename, []byte("original artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tree := collectTargetForTest(t, filename)
+	defer tree.Close()
+	metadata, partial, err := inspectTargetMetadata(tree, 1<<20)
+	if err != nil || partial || metadata["sha256"] == "" {
+		t.Fatalf("initial metadata = %#v partial=%v err=%v", metadata, partial, err)
+	}
+	if err := os.WriteFile(filename, []byte("changed artifact!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !invalidatePublishedTargetHashIfChanged(tree, metadata, 1<<20) {
+		t.Fatal("changed artifact retained its published hash")
+	}
+	if metadata["sha256"] != "" || metadata["bytes_hashed"] != "" || metadata["hash_scope"] != "" {
+		t.Fatalf("stale hash fields survived invalidation: %#v", metadata)
+	}
+	if metadata["sha256_status"] != "invalidated-file-changed-during-scan" {
+		t.Fatalf("hash invalidation status = %q", metadata["sha256_status"])
+	}
+}

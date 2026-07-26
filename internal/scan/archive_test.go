@@ -172,6 +172,16 @@ func TestMalformedZIPIsPartialParseErrorNotHighCWE409(t *testing.T) {
 	if result.Scan.Status != "partial" || len(result.Findings) != 0 {
 		t.Fatalf("desktop malformed ZIP result = status %q, findings %#v", result.Scan.Status, result.Findings)
 	}
+	var archiveModule model.ModuleResult
+	for _, module := range result.Modules {
+		if module.Name == "archive-security" {
+			archiveModule = module
+			break
+		}
+	}
+	if archiveModule.Status != model.ModulePartial || len(archiveModule.Errors) == 0 || len(archiveModule.Limitations) != 0 {
+		t.Fatalf("malformed ZIP was conflated with a resource limit: %#v", archiveModule)
+	}
 }
 
 func TestArchiveSymlinkEscapeAndChainAreHighTraversal(t *testing.T) {

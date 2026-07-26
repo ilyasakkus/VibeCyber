@@ -41,7 +41,17 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 		metadataStatus = model.ModulePartial
 		metadataLimits = []string{"SHA-256 was not published because the bounded stable-read requirement was not met."}
 	}
+	metadataModuleIndex := len(report.Modules)
 	report.Modules = append(report.Modules, model.ModuleResult{Name: "artifact-metadata", Status: metadataStatus, Summary: "Collected static artifact type, size, and bounded hash metadata.", ItemsSeen: 1, Metadata: metadata, Limitations: metadataLimits})
+	defer func() {
+		if !invalidatePublishedTargetHashIfChanged(tree, metadata, e.limits.MaxArchiveTotalBytes) {
+			return
+		}
+		module := &report.Modules[metadataModuleIndex]
+		module.Status = model.ModulePartial
+		const limitation = "The target changed or could not be reverified after analysis, so its previously computed SHA-256 was invalidated."
+		module.Limitations = append(module.Limitations, limitation)
+	}()
 
 	files, walk := tree.Files, tree.Stats
 	stats := mobileStats{}
@@ -84,8 +94,6 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 			})
 			if archiveErr != nil {
 				stats.archiveParseErrs++
-				stats.archiveLimitHit = true
-				stats.readLimitHit = true
 				continue
 			}
 			if archive.LimitHit {
@@ -124,8 +132,10 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 	if stats.archives > 0 {
 		archiveStatus = model.ModuleComplete
 		archiveSummary = fmt.Sprintf("Inspected %d mobile ZIP containers without extracting files.", stats.archives)
-		if stats.archiveLimitHit {
+		if stats.archiveLimitHit || stats.archiveParseErrs > 0 {
 			archiveStatus = model.ModulePartial
+		}
+		if stats.archiveLimitHit {
 			archiveLimitations = []string{"At least one archive exceeded entry, expansion, or compression-ratio limits."}
 		}
 		if stats.archiveParseErrs > 0 {
@@ -134,10 +144,13 @@ func (e *Engine) scanMobile(ctx context.Context, _ Config, report *model.Report)
 	}
 	configStatus := model.ModuleComplete
 	configLimits := []string(nil)
-	if walk.LimitHit || walk.Symlinks > 0 || walk.FilesSkipped > 0 || stats.readLimitHit || stats.binaryManifests > 0 {
+	if walk.LimitHit || walk.Symlinks > 0 || walk.FilesSkipped > 0 || stats.readLimitHit || stats.binaryManifests > 0 || stats.archiveParseErrs > 0 {
 		configStatus = model.ModulePartial
 		if stats.binaryManifests > 0 {
 			configLimits = append(configLimits, "Binary Android XML was identified but not decoded by the dependency-free MVP.")
+		}
+		if stats.archiveParseErrs > 0 {
+			configLimits = append(configLimits, "Manifest coverage was reduced because one or more mobile containers were malformed or unsupported.")
 		}
 		if walk.LimitHit || walk.Symlinks > 0 || walk.FilesSkipped > 0 || stats.readLimitHit {
 			configLimits = append(configLimits, "One or more symlink, file, path, or read boundaries reduced configuration coverage.")
