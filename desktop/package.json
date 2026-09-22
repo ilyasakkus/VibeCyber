@@ -12,7 +12,7 @@
     "check": "node --check main.mjs && node --check preload.mjs && node --check report-validation.mjs && node --check renderer/app.mjs && node --check scripts/prepare-scanner.mjs && node --check scripts/smoke-failed-report.mjs && node scripts/smoke-failed-report.mjs"
   },
   "devDependencies": {
-    "electron": "44.0.0"
+    "electron": "44.4.3"
   },
   "engines": {
     "node": ">=22"
